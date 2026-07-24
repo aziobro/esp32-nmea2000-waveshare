@@ -11,12 +11,34 @@
         }
     },
     {
+        "name": "icmRollInv",
+        "label": "Invert roll",
+        "type": "boolean",
+        "default": "false",
+        "description": "flip the sign of roll before applying the offset below. Use this if the board is mounted 180° rotated (about its roll or yaw axis) rather than the fine offset - a sign flip and an additive offset are different corrections, one can't substitute for the other.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmPitchInv",
+        "label": "Invert pitch",
+        "type": "boolean",
+        "default": "false",
+        "description": "flip the sign of pitch before applying the offset below - same 180°-mount case as the roll invert.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
         "name": "icmRollOff",
         "label": "Roll calibration offset",
         "type": "calval",
         "eval": "-v",
         "default": "0",
-        "description": "degrees added to the raw roll (heel) reading to correct for IMU mounting orientation. With the boat confirmed level, press the \"C\" button - it live-previews the negative of the current raw roll (i.e. the offset that would zero it out); type that number into the box and press Set.",
+        "description": "degrees added to the (possibly inverted) roll reading for fine calibration only - a few degrees, not for correcting a 180° mounting error, use Invert roll for that. With the boat confirmed level, press the \"C\" button - it live-previews the negative of the current reading; type that number into the box and press Set.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
@@ -28,7 +50,7 @@
         "type": "calval",
         "eval": "-v",
         "default": "0",
-        "description": "degrees added to the raw pitch (trim) reading to correct for IMU mounting orientation - same \"C\" button procedure as the roll offset.",
+        "description": "degrees added to the (possibly inverted) pitch reading for fine calibration only - same procedure and same caveat as the roll offset.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"

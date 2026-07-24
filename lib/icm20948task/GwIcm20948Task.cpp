@@ -24,6 +24,20 @@
 #define GWICM20948_SCL_PIN -1
 #endif
 
+// Normalizes to (-180,180] - without this, raw+offset can land outside the
+// expected range (e.g. 359 instead of -1) whenever the sum crosses the
+// wraparound boundary. Note this alone does NOT fix a 180°-mounting-flip
+// correction - that needs a sign inversion (icmRollInv/icmPitchInv), not an
+// additive offset; the two are different operations and one can't
+// substitute for the other, this only makes the offset math well-behaved.
+static double wrapDeg180(double deg)
+{
+    deg = fmod(deg + 180.0, 360.0);
+    if (deg < 0)
+        deg += 360.0;
+    return deg - 180.0;
+}
+
 // Thread-safe holder for the values our web request handler serves - the
 // handler runs on the webserver's thread while runIcm20948Task updates it,
 // same pattern as ExampleWebData in lib/exampletask/GwExampleTask.cpp.
@@ -132,15 +146,22 @@ static void runIcm20948Task(GwApi *api)
         // Re-read every cycle so calibration changes on the Config page take
         // effect immediately, no reboot needed.
         float rollOffsetDeg = 0, pitchOffsetDeg = 0;
+        bool rollInvert = false, pitchInvert = false;
         bool sendAttitude = true;
         config->getValue(rollOffsetDeg, GwConfigDefinitions::icmRollOff, 0.0f);
         config->getValue(pitchOffsetDeg, GwConfigDefinitions::icmPitchOff, 0.0f);
+        config->getValue(rollInvert, GwConfigDefinitions::icmRollInv, false);
+        config->getValue(pitchInvert, GwConfigDefinitions::icmPitchInv, false);
         config->getValue(sendAttitude, GwConfigDefinitions::icmSendAtt, true);
 
-        double rawRollDeg = degrees(rawRollRad);
-        double rawPitchDeg = degrees(rawPitchRad);
-        double rollDeg = rawRollDeg + rollOffsetDeg;
-        double pitchDeg = rawPitchDeg + pitchOffsetDeg;
+        // Invert (sign flip, for a 180° mounting error) happens before the
+        // fine offset - "raw" below means "after mounting-orientation
+        // correction, before fine-tuning", which is what the offset and the
+        // Config page's calibrate button operate on.
+        double rawRollDeg = rollInvert ? -degrees(rawRollRad) : degrees(rawRollRad);
+        double rawPitchDeg = pitchInvert ? -degrees(rawPitchRad) : degrees(rawPitchRad);
+        double rollDeg = wrapDeg180(rawRollDeg + rollOffsetDeg);
+        double pitchDeg = wrapDeg180(rawPitchDeg + pitchOffsetDeg);
         webData.set(rollDeg, pitchDeg, rawRollDeg, rawPitchDeg);
 
         // Feeds the Config page's generic "C" (calibrate) button/dialog for
