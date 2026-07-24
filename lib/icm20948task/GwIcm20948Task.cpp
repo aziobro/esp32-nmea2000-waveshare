@@ -1,5 +1,8 @@
 #include "GwIcm20948Task.h"
 #include "GwHardware.h"
+#include "GWConfig.h"
+#include "GwJsonDocument.h"
+#include "GwSynchronized.h"
 #include <N2kMessages.h>
 #include <ICM_20948.h>
 
@@ -10,12 +13,8 @@
   an uncalibrated heading on the N2K bus is worse than none, since something
   downstream (autopilot, plotter) could trust it. Roll/pitch from the
   accelerometer alone don't have that problem - they're geometrically valid
-  as soon as the axis-to-boat mapping is right, which is why this first pass
-  only sends PGN 127257 (Attitude).
-
-  Roll/pitch sign convention below assumes the board's silkscreened X axis
-  points toward the bow and Z points up when mounted flat - verify this
-  against your actual mounting and adjust GWICM20948_AXIS_* if needed.
+  as soon as the axis-to-boat mapping is right, which the calibration
+  offsets below (icm20948Config.json, category "icm20948") correct for.
 */
 
 #ifndef GWICM20948_SDA_PIN
@@ -24,6 +23,38 @@
 #ifndef GWICM20948_SCL_PIN
 #define GWICM20948_SCL_PIN -1
 #endif
+
+// Thread-safe holder for the values our web request handler serves - the
+// handler runs on the webserver's thread while runIcm20948Task updates it,
+// same pattern as ExampleWebData in lib/exampletask/GwExampleTask.cpp.
+class Icm20948WebData
+{
+    SemaphoreHandle_t lock;
+    bool valid = false;
+    double roll = 0, pitch = 0;       // calibrated, degrees
+    double rawRoll = 0, rawPitch = 0; // raw (no offset), degrees
+public:
+    Icm20948WebData() { lock = xSemaphoreCreateMutex(); }
+    ~Icm20948WebData() { vSemaphoreDelete(lock); }
+    void set(double r, double p, double rawR, double rawP)
+    {
+        GWSYNCHRONIZED(lock);
+        roll = r;
+        pitch = p;
+        rawRoll = rawR;
+        rawPitch = rawP;
+        valid = true;
+    }
+    void toJson(GwJsonDocument &doc)
+    {
+        GWSYNCHRONIZED(lock);
+        doc["valid"] = valid;
+        doc["roll"] = roll;
+        doc["pitch"] = pitch;
+        doc["rawRoll"] = rawRoll;
+        doc["rawPitch"] = rawPitch;
+    }
+};
 
 static void runIcm20948Task(GwApi *api)
 {
@@ -46,6 +77,18 @@ static void runIcm20948Task(GwApi *api)
         }
     }
     LOG_DEBUG(GwLog::LOG, "I2C scan done, %d device(s) found", devicesFound);
+
+    Icm20948WebData webData;
+    // Register the endpoint before we know whether the sensor was found, so
+    // the web UI's IMU tab gets a clean "no data" (valid:false) instead of a
+    // 404 while we're still retrying / if the sensor is missing.
+    api->registerRequestHandler("data", [&webData](AsyncWebServerRequest *request)
+                                {
+        GwJsonDocument doc(256);
+        webData.toJson(doc);
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out); });
 
     ICM_20948_I2C imu;
     bool found = false;
@@ -72,6 +115,7 @@ static void runIcm20948Task(GwApi *api)
         return;
     }
     LOG_DEBUG(GwLog::LOG, "ICM20948 found, starting attitude updates");
+    GwConfigHandler *config = api->getConfig();
     unsigned char sid = 0;
     while (true)
     {
@@ -82,13 +126,31 @@ static void runIcm20948Task(GwApi *api)
         double accX = imu.accX();
         double accY = imu.accY();
         double accZ = imu.accZ();
-        double roll = atan2(accY, accZ);
-        double pitch = atan2(-accX, sqrt(accY * accY + accZ * accZ));
-        LOG_DEBUG(GwLog::DEBUG, "ICM20948 roll=%.3f pitch=%.3f (rad)", roll, pitch);
-        tN2kMsg msg;
-        SetN2kAttitude(msg, sid, N2kDoubleNA, pitch, roll);
-        api->sendN2kMessage(msg);
-        sid = (sid + 1) % 252;
+        double rawRollRad = atan2(accY, accZ);
+        double rawPitchRad = atan2(-accX, sqrt(accY * accY + accZ * accZ));
+
+        // Re-read every cycle so calibration changes on the Config page take
+        // effect immediately, no reboot needed.
+        float rollOffsetDeg = 0, pitchOffsetDeg = 0;
+        bool sendAttitude = true;
+        config->getValue(rollOffsetDeg, GwConfigDefinitions::icmRollOff, 0.0f);
+        config->getValue(pitchOffsetDeg, GwConfigDefinitions::icmPitchOff, 0.0f);
+        config->getValue(sendAttitude, GwConfigDefinitions::icmSendAtt, true);
+
+        double rawRollDeg = degrees(rawRollRad);
+        double rawPitchDeg = degrees(rawPitchRad);
+        double rollDeg = rawRollDeg + rollOffsetDeg;
+        double pitchDeg = rawPitchDeg + pitchOffsetDeg;
+        webData.set(rollDeg, pitchDeg, rawRollDeg, rawPitchDeg);
+
+        LOG_DEBUG(GwLog::DEBUG, "ICM20948 roll=%.1f pitch=%.1f (deg, calibrated)", rollDeg, pitchDeg);
+        if (sendAttitude)
+        {
+            tN2kMsg msg;
+            SetN2kAttitude(msg, sid, N2kDoubleNA, radians(pitchDeg), radians(rollDeg));
+            api->sendN2kMessage(msg);
+            sid = (sid + 1) % 252;
+        }
     }
 }
 
@@ -100,5 +162,6 @@ void initIcm20948(GwApi *api)
         LOG_DEBUG(GwLog::LOG, "no ICM20948 pins defined for this board, task not started");
         return;
     }
+    api->addCapability("icm20948", "true");
     api->addUserTask(runIcm20948Task, String("icm20948Task"), 4000);
 }

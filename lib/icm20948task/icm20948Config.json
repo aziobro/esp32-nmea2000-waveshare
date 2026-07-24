@@ -1,0 +1,35 @@
+[
+    {
+        "name": "icmSendAtt",
+        "label": "Send Attitude (127257)",
+        "type": "boolean",
+        "default": "true",
+        "description": "send NMEA2000 Attitude (roll/pitch) from the ICM-20948 IMU. Turn off while calibrating if you don't want uncalibrated values on the bus.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmRollOff",
+        "label": "Roll calibration offset",
+        "type": "number",
+        "default": "0",
+        "description": "degrees added to the raw roll (heel) reading to correct for IMU mounting orientation. Check the IMU tab's raw value while the boat is confirmed level, then set this to cancel it out.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmPitchOff",
+        "label": "Pitch calibration offset",
+        "type": "number",
+        "default": "0",
+        "description": "degrees added to the raw pitch (trim) reading to correct for IMU mounting orientation, same procedure as the roll offset.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    }
+]
