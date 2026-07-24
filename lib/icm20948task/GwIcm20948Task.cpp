@@ -63,6 +63,7 @@ class Icm20948WebData
     double rawRoll = 0, rawPitch = 0; // after invert, pre fine-offset, degrees
     double heading = 0;               // calibrated magnetic heading, degrees
     bool headingValid = false;
+    double accXg = 0, accYg = 0, accZg = 0; // raw accelerometer, g
 public:
     Icm20948WebData() { lock = xSemaphoreCreateMutex(); }
     ~Icm20948WebData() { vSemaphoreDelete(lock); }
@@ -81,6 +82,13 @@ public:
         heading = h;
         headingValid = true;
     }
+    void setAccel(double ax, double ay, double az)
+    {
+        GWSYNCHRONIZED(lock);
+        accXg = ax;
+        accYg = ay;
+        accZg = az;
+    }
     void toJson(GwJsonDocument &doc)
     {
         GWSYNCHRONIZED(lock);
@@ -91,6 +99,9 @@ public:
         doc["rawPitch"] = rawPitch;
         doc["headingValid"] = headingValid;
         doc["heading"] = heading;
+        doc["accX"] = accXg;
+        doc["accY"] = accYg;
+        doc["accZ"] = accZg;
     }
 };
 
@@ -154,6 +165,22 @@ static void runIcm20948Task(GwApi *api)
     }
     LOG_DEBUG(GwLog::LOG, "ICM20948 found, starting attitude updates");
     GwConfigHandler *config = api->getConfig();
+
+    // Full-scale (sensitivity) range - a one-time hardware setting, not
+    // re-read every loop like the calibration values: changing it on the
+    // Config page restarts the device anyway (same as every other config
+    // change here), which re-runs this init with the new value. Narrower
+    // range = finer resolution but clips sooner; boat motion is normally
+    // gentle enough that the default (narrowest/most sensitive) is right.
+    int accRangeIdx = 0, gyrRangeIdx = 0;
+    config->getValue(accRangeIdx, GwConfigDefinitions::icmAccRange, 0);
+    config->getValue(gyrRangeIdx, GwConfigDefinitions::icmGyrRange, 0);
+    ICM_20948_fss_t fss;
+    fss.a = (uint8_t)accRangeIdx;
+    fss.g = (uint8_t)gyrRangeIdx;
+    imu.setFullScale((ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr), fss);
+    LOG_DEBUG(GwLog::LOG, "ICM20948 setFullScale acc=%d gyr=%d result: %s", accRangeIdx, gyrRangeIdx, imu.statusString());
+
     unsigned char sid = 0;
 
     // Hard-iron tracking: running min/max of the raw magnetometer X/Y since
@@ -175,6 +202,8 @@ static void runIcm20948Task(GwApi *api)
         double accZ = imu.accZ();
         double rawRollRad = atan2(accY, accZ);
         double rawPitchRad = atan2(-accX, sqrt(accY * accY + accZ * accZ));
+        // accX/Y/Z from the library are in mg (milli-g) - report in g.
+        webData.setAccel(accX / 1000.0, accY / 1000.0, accZ / 1000.0);
 
         // Re-read every cycle so calibration changes on the Config page take
         // effect immediately, no reboot needed.
@@ -287,5 +316,8 @@ void initIcm20948(GwApi *api)
         return;
     }
     api->addCapability("icm20948", "true");
-    api->addUserTask(runIcm20948Task, String("icm20948Task"), 4000);
+    // 4000 was enough for roll/pitch alone but crashed (stack canary/Guru
+    // Meditation on IDLE1) once the compass math (extra doubles, trig calls)
+    // was added - bench-confirmed on real hardware, not a guess.
+    api->addUserTask(runIcm20948Task, String("icm20948Task"), 6000);
 }

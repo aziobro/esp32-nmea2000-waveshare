@@ -111,5 +111,39 @@
         "capabilities": {
             "icm20948": "true"
         }
+    },
+    {
+        "name": "icmAccRange",
+        "label": "Accelerometer range",
+        "type": "list",
+        "default": "0",
+        "list": [
+            {"l": "+/-2g (most sensitive)", "v": "0"},
+            {"l": "+/-4g", "v": "1"},
+            {"l": "+/-8g", "v": "2"},
+            {"l": "+/-16g (least sensitive)", "v": "3"}
+        ],
+        "description": "accelerometer full-scale range - narrower gives finer resolution but clips sooner. Boat motion is normally gentle enough that +/-2g is right; widen only if mounted somewhere that could see shock loads (e.g. slamming into waves) hard enough to clip a narrower range. Takes effect after Save (restarts and re-initializes the sensor).",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmGyrRange",
+        "label": "Gyroscope range",
+        "type": "list",
+        "default": "0",
+        "list": [
+            {"l": "+/-250 deg/s (most sensitive)", "v": "0"},
+            {"l": "+/-500 deg/s", "v": "1"},
+            {"l": "+/-1000 deg/s", "v": "2"},
+            {"l": "+/-2000 deg/s (least sensitive)", "v": "3"}
+        ],
+        "description": "gyroscope full-scale range - same tradeoff as the accelerometer range above. Boat rotation rates are normally gentle; widen only if something rotates unusually fast (this task doesn't currently use the gyro's own reading for anything, only the accelerometer/magnetometer, so this mainly matters if you plan to extend the task to use it).",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
     }
 ]
