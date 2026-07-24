@@ -82,18 +82,38 @@ Before trusting the RS485 port with real NMEA0183 gear: bench-test with a
 USB-RS485 adapter and confirm data flows in "send" mode and again in
 "receive" mode. If it's backwards, flip `GWSERIAL_ELO` to `1`.
 
-Known local build issue (unrelated to this board)
-----------------------------------------------------
-`pio run` currently fails to fetch the pinned
-`ttlappalainen_NMEA2000=...NMEA2000.git#20251126` dependency on this machine
-(git 2.50.1): PlatformIO fetches the tag into `FETCH_HEAD` but then runs
-`git reset --hard 20251126` against a ref that was never created locally,
-so it errors out. This reproduces identically on the stock
-`m5stack-atoms3-canunit` environment, so it's a PlatformIO/git version
-interaction, not something introduced by this board's files. Confirmed:
-this environment resolves the board (`esp32-s3-devkitm-1`), installs the
-ESP32-S3 toolchain, and gets to the same lib_deps step as every other
-environment before hitting this wall.
+Build dependency workaround (unrelated to this board, but fixed here)
+----------------------------------------------------------------------
+`pio run` fails to fetch the pinned
+`ttlappalainen_NMEA2000=...NMEA2000.git#20251126` dependency on PlatformIO
+6.1.19 with a modern git (e.g. 2.50.1): PlatformIO fetches the tag into
+`FETCH_HEAD` but then runs `git reset --hard 20251126` against a ref that
+was never created locally, so it errors out. This reproduces identically on
+the stock `m5stack-atoms3-canunit` environment, so it's a PlatformIO/git
+version interaction, not something introduced by this board's files - don't
+try to fix it by editing the shared root `platformio.ini`.
+
+Worked around in [../lib/waveshare485cantask/platformio.ini](../lib/waveshare485cantask/platformio.ini)
+by restating the full `lib_deps` list for this one environment with the
+NMEA2000 entry pinned to its resolved commit SHA
+(`bb5e2b31eb6066b1f82d3e0265f2b13154363ca5`) instead of the tag name -
+fetching a commit SHA doesn't hit the same local-ref problem. Note
+PlatformIO resolves duplicate library names by **first** occurrence, so
+just appending an override after `${env.lib_deps}` doesn't work; the whole
+list has to be restated with nothing else referencing `${env.lib_deps}`. If
+upstream changes the dependency list in the root `platformio.ini`'s
+`[env]`/`[basedeps]`, mirror the non-NMEA2000 lines here too.
+
+Also needed: `USBSerial` alias. `GwHardware.h` only defines `#define
+USBSerial Serial` for a handful of `PLATFORM_BOARD_*` ids (M5Atom/StickC/
+NodeMCU, and C3 when CDC-on-boot is set) - our generic `esp32-s3-devkitm-1`
+board id isn't in that list, so `src/main.cpp`'s `USBSerial.print()` calls
+in the log writer failed to compile. Added the same guarded alias (`#ifdef
+ARDUINO_USB_CDC_ON_BOOT ... #define USBSerial Serial`) in our own header.
+
+Both fixes verified 2026-07-24: builds clean and boots on the real board
+over USB serial - WiFi AP came up as `ESP32NMEA2K` (default admin password
+`esp32admin`).
 
 Power / NMEA2000 LEN
 ---------------------
