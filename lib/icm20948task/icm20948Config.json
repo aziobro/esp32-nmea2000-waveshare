@@ -11,6 +11,17 @@
         }
     },
     {
+        "name": "icmUseDmp",
+        "label": "Use sensor fusion (DMP)",
+        "type": "boolean",
+        "default": "true",
+        "description": "use the chip's onboard sensor fusion (accel+gyro+compass fused in hardware) instead of the plain accelerometer tilt calculation and separate compass math. More accurate and far more stable once there's real boat motion - a plain accelerometer can't tell gravity apart from the boat's own acceleration, gyro fusion can. Falls back to the plain calculation automatically if fusion fails to initialize. Takes effect after Save (restarts and re-initializes the sensor). While this is on, the compass hard-iron offsets below do NOT apply - fusion calibrates the compass internally and we can't inject our own offset into that.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
         "name": "icmRollInv",
         "label": "Invert roll",
         "type": "boolean",
@@ -72,7 +83,7 @@
         "label": "Compass X hard-iron offset",
         "type": "calset",
         "default": "0",
-        "description": "hard-iron offset for the magnetometer X axis. Procedure: press Reset on the Status page for a clean start, then rotate the WHOLE BOAT slowly through at least one full circle (this is a compass swing - the sensor is bolted down, it can't be waved around like a handheld device) while watching the \"C\" button's live preview stabilize; then Set. Do this and the Y offset below together, same swing.",
+        "description": "hard-iron offset for the magnetometer X axis - only used when \"Use sensor fusion (DMP)\" above is OFF (fusion calibrates the compass internally instead). Procedure: press Reset on the Status page for a clean start, then rotate the WHOLE BOAT slowly through at least one full circle (this is a compass swing - the sensor is bolted down, it can't be waved around like a handheld device) while watching the \"C\" button's live preview stabilize; then Set. Do this and the Y offset below together, same swing.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
@@ -83,7 +94,7 @@
         "label": "Compass Y hard-iron offset",
         "type": "calset",
         "default": "0",
-        "description": "hard-iron offset for the magnetometer Y axis - same compass-swing procedure as the X offset above, at the same time.",
+        "description": "hard-iron offset for the magnetometer Y axis - same compass-swing procedure as the X offset above, at the same time. Also only used when sensor fusion is OFF.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
@@ -140,7 +151,21 @@
             {"l": "+/-1000 deg/s", "v": "2"},
             {"l": "+/-2000 deg/s (least sensitive)", "v": "3"}
         ],
-        "description": "gyroscope full-scale range - same tradeoff as the accelerometer range above. Boat rotation rates are normally gentle; widen only if something rotates unusually fast (this task doesn't currently use the gyro's own reading for anything, only the accelerometer/magnetometer, so this mainly matters if you plan to extend the task to use it).",
+        "description": "gyroscope full-scale range - same tradeoff as the accelerometer range above. Boat rotation rates are normally gentle; widen only if something rotates unusually fast. Used directly by sensor fusion (DMP) when that's on; with fusion off this task doesn't read the gyro at all.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmRateHz",
+        "label": "Update rate (Hz)",
+        "type": "number",
+        "default": "10",
+        "min": 1,
+        "max": 50,
+        "check": "checkMinMax",
+        "description": "how often to sample the sensor and send N2K Attitude/Heading, in Hz. The sensor itself already runs fast enough for this (magnetometer is configured for continuous 100Hz, accel/gyro run in continuous mode) - this is purely our own polling rate. Higher isn't free: more CAN bus traffic and I2C/CPU load, though at these rates that's still trivial for the ESP32-S3.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
