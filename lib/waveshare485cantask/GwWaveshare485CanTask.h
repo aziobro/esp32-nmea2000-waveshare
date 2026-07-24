@@ -68,4 +68,17 @@
 #define GWBUTTON_ACTIVE LOW
 #define GWBUTTON_PULLUPDOWN
 
+// --- Qwiic-compatible expansion connector (lib/icm20948task) ---
+// Confirmed via the schematic's own GPIO summary table: IO1/IO2 have no
+// other onboard function (not CAN/RS485/RTC/SD/network/relay/DIN/"Other") -
+// they're genuinely spare GPIOs broken out to a JST-SH Qwiic connector,
+// with no fixed SDA/SCL role documented anywhere (Waveshare's demo firmware
+// never touches these pins either). SDA/SCL assignment below is a guess
+// matching the standard Qwiic pin order (GND,3V3,SDA,SCL); since the S3's
+// I2C peripheral is routed through its GPIO matrix (not fixed-function
+// pins), if this is backwards the IMU simply won't answer on the bus -
+// swap the two values and reflash, no hardware risk either way.
+#define GWICM20948_SDA_PIN GPIO_NUM_2
+#define GWICM20948_SCL_PIN GPIO_NUM_1
+
 #endif

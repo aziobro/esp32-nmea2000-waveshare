@@ -112,8 +112,10 @@ in the log writer failed to compile. Added the same guarded alias (`#ifdef
 ARDUINO_USB_CDC_ON_BOOT ... #define USBSerial Serial`) in our own header.
 
 Both fixes verified 2026-07-24: builds clean and boots on the real board
-over USB serial - WiFi AP came up as `ESP32NMEA2K` (default admin password
-`esp32admin`).
+over USB serial - WiFi AP came up as `ESP32NMEA2K`, default join password
+`esp32nmea2k` (config item `apPassword`) - don't confuse with
+`adminPassword` (default `esp32admin`), a *different* password gating the
+web config UI, used only after you're already connected to the AP.
 
 Power / NMEA2000 LEN
 ---------------------
@@ -122,3 +124,43 @@ pin, and the board has its own isolated power supply - so it draws nothing
 from the N2K bus. `N2K_LOAD_LEVEL` is left at `0` (the core's own default)
 rather than the `3` (~150mA) used by boards that parasitically power
 themselves from the bus.
+
+Qwiic expansion connector - SparkFun ICM-20948 9DoF IMU (heel/pitch)
+-----------------------------------------------------------------------
+The board has a genuine Qwiic-compatible (1mm JST-SH, 4-pin) connector
+physically labeled GND/3V3/IO2/IO1 - confirmed by inspecting the actual
+board, not just the docs. The schematic's own GPIO summary table shows IO1
+and IO2 have no other onboard function (not CAN/RS485/RTC/SD/network/relay/
+DIN/"Other") - they're genuinely spare GPIOs with no documented SDA/SCL
+role, broken out for general expansion. `GWICM20948_SDA_PIN`/
+`GWICM20948_SCL_PIN` in the board header assign IO2=SDA/IO1=SCL, matching
+the standard Qwiic pin order - confirmed correct on real hardware (see
+below), but if you ever rewire this, a backwards guess just means the I2C
+device doesn't enumerate - swap the two values and reflash, no hardware
+risk either way since the S3's I2C peripheral is GPIO-matrix-routed, not
+fixed-function.
+
+[lib/icm20948task/](../lib/icm20948task/) reads a SparkFun 9DoF IMU
+Breakout (ICM-20948, Qwiic) on that connector and sends NMEA2000 PGN 127257
+(Attitude) - roll/pitch only, computed from the accelerometer via a simple
+tilt calculation (`atan2`), at ~5Hz. Deliberately **not** sending magnetic
+heading (PGN 127250) yet: the magnetometer needs a hard/soft-iron deviation
+calibration (compass swing) against its actual mounting position before its
+numbers mean anything - an uncalibrated heading on the bus is worse than no
+heading, since an autopilot or plotter downstream could trust it.
+
+Verified 2026-07-24 on real hardware: I2C scan finds the IMU at `0x69`
+(factory default address, ADR jumper open), library init succeeds
+immediately ("All is well"), and roll/pitch values stream continuously and
+stably. Two things still open, inherent to any heel/heading sensor
+regardless of firmware, not bugs to fix:
+- Roll/pitch sign convention assumes the board's silkscreened X axis points
+  toward the bow and Z points up when mounted flat - this needs a
+  mounting-orientation offset once it's actually installed on the boat.
+- No compass calibration has been done, which is why heading isn't sent at
+  all yet (see above).
+
+The task's init/detection messages log at `GwLog::LOG`, periodic
+roll/pitch readings at `GwLog::DEBUG` - both are silent if the device's
+runtime log level is set below that (a per-device web UI setting, not a
+firmware issue) - bump the log level there to see them.
