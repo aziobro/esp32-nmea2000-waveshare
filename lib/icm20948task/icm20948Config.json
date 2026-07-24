@@ -15,7 +15,7 @@
         "label": "Invert roll",
         "type": "boolean",
         "default": "false",
-        "description": "flip the sign of roll before applying the offset below. Use this if the board is mounted 180° rotated (about its roll or yaw axis) rather than the fine offset - a sign flip and an additive offset are different corrections, one can't substitute for the other.",
+        "description": "flip the sign of roll before applying the offset below. NMEA2000 defines positive roll as tilted right (heeling to starboard) - heel the boat to a known side (or just prop it up) and check the \"Roll (heel), calibrated\" value on the IMU tab: if it reads NEGATIVE while heeling to starboard, enable this. Use this for a 180° mounting flip (about the roll or yaw axis), not the fine offset below - a sign flip and an additive offset are different corrections, one can't substitute for the other.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
@@ -26,7 +26,7 @@
         "label": "Invert pitch",
         "type": "boolean",
         "default": "false",
-        "description": "flip the sign of pitch before applying the offset below - same 180°-mount case as the roll invert.",
+        "description": "flip the sign of pitch before applying the offset below. NMEA2000 defines positive pitch as the bow rising - lift the bow and check the \"Pitch (trim), calibrated\" value: if it reads NEGATIVE while the bow rises, enable this. Same 180°-mount case as the roll invert.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
@@ -51,6 +51,62 @@
         "eval": "-v",
         "default": "0",
         "description": "degrees added to the (possibly inverted) pitch reading for fine calibration only - same procedure and same caveat as the roll offset.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmSendHdg",
+        "label": "Send Magnetic Heading (127250)",
+        "type": "boolean",
+        "default": "false",
+        "description": "send NMEA2000 Magnetic Heading from the ICM-20948's compass. Defaults OFF on purpose - calibrate the fields below first (an uncalibrated heading on the bus is worse than none, since an autopilot or plotter could trust it). This is a simple hard-iron-only calibration, not a full compass swing with a deviation table - expect a few degrees of residual, heading-dependent error.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmMagXOff",
+        "label": "Compass X hard-iron offset",
+        "type": "calset",
+        "default": "0",
+        "description": "hard-iron offset for the magnetometer X axis. Procedure: press Reset on the Status page for a clean start, then rotate the WHOLE BOAT slowly through at least one full circle (this is a compass swing - the sensor is bolted down, it can't be waved around like a handheld device) while watching the \"C\" button's live preview stabilize; then Set. Do this and the Y offset below together, same swing.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmMagYOff",
+        "label": "Compass Y hard-iron offset",
+        "type": "calset",
+        "default": "0",
+        "description": "hard-iron offset for the magnetometer Y axis - same compass-swing procedure as the X offset above, at the same time.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmHdgInv",
+        "label": "Invert heading",
+        "type": "boolean",
+        "default": "false",
+        "description": "flip the sign of the computed heading before applying the offset below. Point the bow at a known heading (chart feature, sun position, another compass): if turning the bow to starboard makes the displayed heading DECREASE instead of increase, enable this - a mirrored axis needs a sign flip, not an offset, same reasoning as the roll/pitch inverts.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmHdgOff",
+        "label": "Heading calibration offset",
+        "type": "calval",
+        "eval": "-v",
+        "default": "0",
+        "description": "degrees added to the (hard-iron corrected, possibly inverted) heading for fine calibration - do this AFTER the hard-iron offsets above. Point the bow at a precisely known heading, press the \"C\" button - it live-previews the offset that would make the display match 0/north; adjust the previewed number to match your actual known heading instead, then Set.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
