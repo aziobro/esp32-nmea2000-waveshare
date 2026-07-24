@@ -13,9 +13,10 @@
     {
         "name": "icmRollOff",
         "label": "Roll calibration offset",
-        "type": "number",
+        "type": "calval",
+        "eval": "-v",
         "default": "0",
-        "description": "degrees added to the raw roll (heel) reading to correct for IMU mounting orientation. Check the IMU tab's raw value while the boat is confirmed level, then set this to cancel it out.",
+        "description": "degrees added to the raw roll (heel) reading to correct for IMU mounting orientation. With the boat confirmed level, press the \"C\" button - it live-previews the negative of the current raw roll (i.e. the offset that would zero it out); type that number into the box and press Set.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
@@ -24,9 +25,10 @@
     {
         "name": "icmPitchOff",
         "label": "Pitch calibration offset",
-        "type": "number",
+        "type": "calval",
+        "eval": "-v",
         "default": "0",
-        "description": "degrees added to the raw pitch (trim) reading to correct for IMU mounting orientation, same procedure as the roll offset.",
+        "description": "degrees added to the raw pitch (trim) reading to correct for IMU mounting orientation - same \"C\" button procedure as the roll offset.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"

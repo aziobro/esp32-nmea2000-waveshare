@@ -143,6 +143,14 @@ static void runIcm20948Task(GwApi *api)
         double pitchDeg = rawPitchDeg + pitchOffsetDeg;
         webData.set(rollDeg, pitchDeg, rawRollDeg, rawPitchDeg);
 
+        // Feeds the Config page's generic "C" (calibrate) button/dialog for
+        // icmRollOff/icmPitchOff (see icm20948Config.json, type "calval") -
+        // same generic /api/calibrate mechanism lib/spitask's DMS22B zero
+        // calibration uses. The config item's "eval":"-v" negates this raw
+        // value to preview the offset that would zero it out.
+        api->setCalibrationValue(GwConfigDefinitions::icmRollOff, rawRollDeg);
+        api->setCalibrationValue(GwConfigDefinitions::icmPitchOff, rawPitchDeg);
+
         LOG_DEBUG(GwLog::DEBUG, "ICM20948 roll=%.1f pitch=%.1f (deg, calibrated)", rollDeg, pitchDeg);
         if (sendAttitude)
         {
