@@ -20,6 +20,18 @@
 */
 #ifdef BOARD_WAVESHARE_ESP32S3_RS485_CAN
 
+// Native USB Type-C -> S3's built-in USB CDC. With ARDUINO_USB_CDC_ON_BOOT,
+// the Arduino core routes the ordinary Serial object over USB CDC, but
+// core code (src/main.cpp) logs via a symbol named USBSerial - GwHardware.h
+// only aliases that for boards it knows about (M5Atom/StickC/NodeMCU/C3),
+// not our generic esp32-s3-devkitm-1 board id, so we alias it ourselves the
+// same way the C3 case does.
+#ifdef ARDUINO_USB_CDC_ON_BOOT
+  #if ARDUINO_USB_CDC_ON_BOOT == 1
+    #define USBSerial Serial
+  #endif
+#endif
+
 // --- CAN / NMEA2000 (TWAI controller -> TJA1051T/3/1J transceiver) ---
 // Confirmed: WS_GPIO.h TXD2=15/RXD2=16, schematic net labels TXD2/RXD2 on
 // the CAN block feeding U8 (TJA1051T/3/1J). No direction pin needed - the
