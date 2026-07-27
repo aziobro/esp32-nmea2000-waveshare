@@ -18,7 +18,18 @@
   lib/exampletask/Readme.md: this file lives outside the core so that
   `git fetch upstream && git merge upstream/master` applies cleanly.
 */
-#ifdef BOARD_WAVESHARE_ESP32S3_RS485_CAN
+/*
+  Two board defines share this one header, since they're the same physical
+  board with different things wired to the Qwiic expansion connector:
+   - BOARD_WAVESHARE_ESP32S3_RS485_CAN: ICM-20948 IMU on I2C (lib/icm20948task)
+   - BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN: external TTL<->RS422
+     transceiver on a plain UART, bridging a Garmin chartplotter's NMEA0183
+     port onto this device's NMEA2000 bus (no custom task needed - see the
+     Serial2 block below, it's the core's existing second-channel mechanism)
+  The two never coexist in one build, so both can define the same two GPIOs
+  for different purposes without conflict.
+*/
+#if defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN) || defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN)
 
 // Native USB Type-C -> S3's built-in USB CDC. With ARDUINO_USB_CDC_ON_BOOT,
 // the Arduino core routes the ordinary Serial object over USB CDC, but
@@ -68,17 +79,41 @@
 #define GWBUTTON_ACTIVE LOW
 #define GWBUTTON_PULLUPDOWN
 
-// --- Qwiic-compatible expansion connector (lib/icm20948task) ---
+// --- Qwiic-compatible expansion connector ---
 // Confirmed via the schematic's own GPIO summary table: IO1/IO2 have no
 // other onboard function (not CAN/RS485/RTC/SD/network/relay/DIN/"Other") -
-// they're genuinely spare GPIOs broken out to a JST-SH Qwiic connector,
-// with no fixed SDA/SCL role documented anywhere (Waveshare's demo firmware
-// never touches these pins either). SDA/SCL assignment below is a guess
+// they're genuinely spare GPIOs broken out to a JST-SH Qwiic connector.
+// What's wired to them differs per physical unit/board define below.
+
+#ifdef BOARD_WAVESHARE_ESP32S3_RS485_CAN
+// ICM-20948 IMU (lib/icm20948task) via I2C. SDA/SCL assignment is a guess
 // matching the standard Qwiic pin order (GND,3V3,SDA,SCL); since the S3's
 // I2C peripheral is routed through its GPIO matrix (not fixed-function
 // pins), if this is backwards the IMU simply won't answer on the bus -
 // swap the two values and reflash, no hardware risk either way.
 #define GWICM20948_SDA_PIN GPIO_NUM_2
 #define GWICM20948_SCL_PIN GPIO_NUM_1
+#endif
+
+#ifdef BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN
+// External TTL<->RS422 transceiver breakout, bridging a Garmin
+// chartplotter's NMEA0183 (RS422) port onto this device's NMEA2000 bus.
+// This is the core's existing second serial channel (SERIAL2_CHANNEL_ID,
+// see lib/channel/GwChannelList.cpp) - no custom task/lib needed, it gets
+// the same automatic NMEA0183<->NMEA2000 conversion and web config/status
+// fields as the onboard RS485 port (Serial1) does.
+//
+// Wiring (confirmed on the physical harness):
+//   orange wire (IO2/GPIO2) -> RS422 module RXD (this is our UART TX out)
+//   yellow wire (IO1/GPIO1) -> RS422 module TXD (this is our UART RX in)
+// Type BI (not UNI like the onboard half-duplex RS485 chip): the external
+// RS422 transceiver has independent driver/receiver circuits that are
+// always both active - no shared pair, no direction/enable pin to manage.
+// Garmin configured for its "high speed" NMEA0183 setting -> 38400 baud.
+#define GWSERIAL2_TX GPIO_NUM_2
+#define GWSERIAL2_RX GPIO_NUM_1
+#define GWSERIAL2_TYPE GWSERIAL_TYPE_BI
+#define GWSERIAL2_BAUD 38400
+#endif
 
 #endif
