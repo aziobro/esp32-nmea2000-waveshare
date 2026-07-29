@@ -114,6 +114,16 @@
 #define GWSERIAL2_RX GPIO_NUM_1
 #define GWSERIAL2_TYPE GWSERIAL_TYPE_BI
 #define GWSERIAL2_BAUD 38400
+
+// This unit's whole purpose is being a GPS/position source on N2K (the
+// Garmin's position data, bridged in over the RS422 link above) - declare
+// it as such (NMEA2000 Class 60 "Navigation", Function 145 "Own Vessel
+// Position (GNSS)") rather than the default generic-gateway identity, so
+// other devices' "search for a GPS source" UI (e.g. a VHF radio's NMEA2000
+// setup) actually finds it - that search filters by declared class/
+// function, not just by which PGNs are present on the bus.
+#define N2K_DEVICE_CLASS 60
+#define N2K_DEVICE_FUNCTION 145
 #endif
 
 #endif

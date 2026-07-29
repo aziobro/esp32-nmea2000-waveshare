@@ -31,6 +31,21 @@ const unsigned long HEAP_REPORT_TIME=2000; //set to 0 to disable heap reporting
 #define N2K_CERTIFICATION_LEVEL 0xff
 #endif
 
+// Device function/class for NMEA2000 ISO Address Claim - default is a
+// generic gateway (130/25), matching every board that doesn't override
+// this. A board whose whole purpose is bridging a specific device type
+// (e.g. a GPS source) onto N2K can override these so other N2K devices'
+// own "search for a GPS/wind/depth source" UI flows - which typically
+// filter by declared class/function, not just by which PGNs are on the
+// bus - actually find it.
+#ifndef N2K_DEVICE_FUNCTION
+#define N2K_DEVICE_FUNCTION 130
+#endif
+
+#ifndef N2K_DEVICE_CLASS
+#define N2K_DEVICE_CLASS 25
+#endif
+
 #include <ActisenseReader.h>
 #include <Seasmart.h>
 #include <N2kMessages.h>
@@ -900,8 +915,8 @@ void setup() {
                                 );
   // Set device information
   NMEA2000.SetDeviceInformation(id, // Unique number. Use e.g. Serial number. Id is generated from MAC-Address
-                                130, // Device function=Analog to NMEA 2000 Gateway. See codes on http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
-                                25, // Device class=Inter/Intranetwork Device. See codes on  http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                N2K_DEVICE_FUNCTION, // See codes on http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                N2K_DEVICE_CLASS, // See codes on  http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
                                 2046 // Just choosen free from code list on http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf
                                );
 
