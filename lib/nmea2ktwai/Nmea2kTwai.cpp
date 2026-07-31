@@ -82,6 +82,10 @@ void Nmea2kTwai::initDriver(){
     if (disabled) return;
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(TxPin,RxPin, TWAI_MODE_NORMAL);
     g_config.tx_queue_len=20;
+    // default (5) is too shallow once the bus carries several active nodes -
+    // a brief stall in draining the queue (WiFi/web/BLE task scheduling)
+    // drops frames as rx_missed instead of just adding latency
+    g_config.rx_queue_len=32;
     twai_timing_config_t t_config = TWAI_TIMING_CONFIG_250KBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     esp_err_t rt=twai_driver_install(&g_config, &t_config, &f_config);
