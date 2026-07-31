@@ -1,0 +1,57 @@
+[
+    {
+        "name": "dst810Enable",
+        "label": "Connect to DST810 (BLE)",
+        "type": "boolean",
+        "default": "true",
+        "description": "scan for and connect to an Airmar/B&G DST810 depth/speed/water-temp sensor over Bluetooth LE. No pairing needed - the sensor streams plain NMEA0183 once connected.",
+        "category": "dst810",
+        "capabilities": {
+            "dst810": "true"
+        }
+    },
+    {
+        "name": "dst810Name",
+        "label": "BLE name filter",
+        "type": "text",
+        "default": "DST",
+        "description": "only connect to a BLE device whose advertised name starts with this - the DST810 advertises as something like \"DSTAF07CA\".",
+        "category": "dst810",
+        "capabilities": {
+            "dst810": "true"
+        }
+    },
+    {
+        "name": "dst810SendDep",
+        "label": "Send Water Depth (128267)",
+        "type": "boolean",
+        "default": "true",
+        "description": "send NMEA2000 Water Depth from the DST810's $--DPT sentence. The sensor's own transducer offset (distance to waterline/keel, set up via Airmar's own configuration) is passed through as-is, not re-calibrated here.",
+        "category": "dst810",
+        "capabilities": {
+            "dst810": "true"
+        }
+    },
+    {
+        "name": "dst810SendSpd",
+        "label": "Send Boat Speed (128259)",
+        "type": "boolean",
+        "default": "true",
+        "description": "send NMEA2000 Speed (water referenced) from the DST810's $--VHW sentence.",
+        "category": "dst810",
+        "capabilities": {
+            "dst810": "true"
+        }
+    },
+    {
+        "name": "dst810SendTmp",
+        "label": "Send Water Temperature (130316)",
+        "type": "boolean",
+        "default": "true",
+        "description": "send NMEA2000 Temperature (sea/water) from the DST810's $--MTW sentence.",
+        "category": "dst810",
+        "capabilities": {
+            "dst810": "true"
+        }
+    }
+]

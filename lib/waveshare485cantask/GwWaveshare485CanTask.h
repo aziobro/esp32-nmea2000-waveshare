@@ -93,6 +93,10 @@
 // swap the two values and reflash, no hardware risk either way.
 #define GWICM20948_SDA_PIN GPIO_NUM_2
 #define GWICM20948_SCL_PIN GPIO_NUM_1
+
+// DST810 depth/speed/temp sensor over BLE (lib/dst810task) - no pins
+// needed, just enables the BLE-central task on this unit.
+#define GWDST810_ENABLE
 #endif
 
 #ifdef BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN
