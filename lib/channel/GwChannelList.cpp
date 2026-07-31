@@ -81,6 +81,9 @@ CFG_SERIAL(SERIAL1_CHANNEL_ID, GWSERIAL_RX, GWSERIAL_TX, typeFromMode(GWSERIAL_M
 #ifndef GWSERIAL2_BAUD
 #define GWSERIAL2_BAUD -1
 #endif
+#ifndef GWSERIAL2_INVERT
+#define GWSERIAL2_INVERT false
+#endif
 #ifdef GWSERIAL2_TYPE
     CFG_SERIAL(SERIAL2_CHANNEL_ID, GWSERIAL2_RX, GWSERIAL2_TX, GWSERIAL2_TYPE,GWSERIAL2_BAUD,GWSERIAL2_ENA,GWSERIAL2_ELO)
 #else
@@ -376,6 +379,14 @@ static GwSerial * createSerialImpl(GwConfigHandler *config,GwLog *logger, int id
         }
     }
     serialStream->begin(config->getInt(param->baud,115200),SERIAL_8N1,rx,tx);
+#if SOC_UART_NUM > 2
+    if (param->id == SERIAL2_CHANNEL_ID){
+        // some devices (seen with a directly-wired AIS transponder UART)
+        // idle the line low instead of high - GWSERIAL2_INVERT lets a
+        // board header override this per-unit, default unchanged (false)
+        Serial2.setRxInvert(GWSERIAL2_INVERT);
+    }
+#endif
     if (setLog){
         logger->setWriter(new GwSerialLog(serialStream,config->getBool(param->preventLog,false)));
         logger->prefix="GWSERIAL:";

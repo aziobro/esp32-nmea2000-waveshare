@@ -19,17 +19,23 @@
   `git fetch upstream && git merge upstream/master` applies cleanly.
 */
 /*
-  Two board defines share this one header, since they're the same physical
-  board with different things wired to the Qwiic expansion connector:
+  Three board defines share this one header, since they're the same
+  physical board with different things wired to the Qwiic expansion
+  connector:
    - BOARD_WAVESHARE_ESP32S3_RS485_CAN: ICM-20948 IMU on I2C (lib/icm20948task)
    - BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN: external TTL<->RS422
      transceiver on a plain UART, bridging a Garmin chartplotter's NMEA0183
      port onto this device's NMEA2000 bus (no custom task needed - see the
      Serial2 block below, it's the core's existing second-channel mechanism)
-  The two never coexist in one build, so both can define the same two GPIOs
-  for different purposes without conflict.
+   - BOARD_WAVESHARE_ESP32S3_RS485_CAN_AIS: direct TTL UART connection to
+     an AIS unit's own UART (receive-only, no custom task needed either -
+     same Serial2 mechanism, AIS's "!--VDM"/"!--VDO" sentences are already
+     recognized by the core's generic NMEA0183 line parser like any other
+     sentence)
+  These never coexist in one build, so all three can define the same two
+  GPIOs for different purposes without conflict.
 */
-#if defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN) || defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN)
+#if defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN) || defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN) || defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN_AIS)
 
 // Native USB Type-C -> S3's built-in USB CDC. With ARDUINO_USB_CDC_ON_BOOT,
 // the Arduino core routes the ordinary Serial object over USB CDC, but
@@ -128,6 +134,37 @@
 // function, not just by which PGNs are present on the bus.
 #define N2K_DEVICE_CLASS 60
 #define N2K_DEVICE_FUNCTION 145
+#endif
+
+#ifdef BOARD_WAVESHARE_ESP32S3_RS485_CAN_AIS
+// Direct TTL UART connection to an AIS unit's own UART output (no RS422
+// transceiver in between this time - the AIS unit's UART pins are
+// already at logic level). Receive-only for now: we just want to verify
+// the link works and AIS sentences are actually arriving, not send
+// anything back to the unit.
+//
+// Wiring: TENTATIVE, not yet bench-confirmed - swap the two values and
+// reflash if no data shows up (same zero-risk swap-and-retry the Garmin
+// bridge's RS422 link needed before it was confirmed correct).
+//   yellow wire (IO1/GPIO1) -> AIS unit's TXD (this is our UART RX in)
+//   orange wire (IO2/GPIO2) -> AIS unit's RXD (unused for now, receive-only)
+// AIS transponders transmit NMEA0183 at the IEC 61162-1/61993-2
+// "high speed" rate, 38400 baud - not the usual 4800.
+//
+// Bring-up finding (2026-07): neither wiring orientation, with or without
+// GWSERIAL2_INVERT (see GwChannelList.cpp) forced on, ever produced a
+// single valid or garbage line - one orientation was pure silence, the
+// other constant UART BREAK errors with zero decoded bytes either way.
+// That pattern (activity that never resolves into any framed byte,
+// regardless of polarity) doesn't fit a wiring/polarity problem - it's
+// more consistent with the AIS unit's UART output not being alive at
+// all. Suspected fried AIS unit; it and this gateway have both been
+// disconnected pending hardware repair/replacement, so these pin/baud
+// values are unverified until then.
+#define GWSERIAL2_RX GPIO_NUM_1
+#define GWSERIAL2_TX GPIO_NUM_2
+#define GWSERIAL2_TYPE GWSERIAL_TYPE_RX
+#define GWSERIAL2_BAUD 38400
 #endif
 
 #endif
