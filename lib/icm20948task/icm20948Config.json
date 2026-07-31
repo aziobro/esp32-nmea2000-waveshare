@@ -124,6 +124,28 @@
         }
     },
     {
+        "name": "icmSendRot",
+        "label": "Send Rate of Turn (127251)",
+        "type": "boolean",
+        "default": "true",
+        "description": "send NMEA2000 Rate of Turn from the gyroscope's Z axis - a direct hardware measurement, not derived from the (slower, smoothed) heading value, so it responds immediately to an actual turn. Unlike heading, this doesn't need a compass swing to be trustworthy - defaults on.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmRotInv",
+        "label": "Invert rate of turn",
+        "type": "boolean",
+        "default": "false",
+        "description": "flip the sign of rate of turn. NMEA2000 defines positive as turning to starboard - turn the bow to starboard and check the IMU tab: if the value reads NEGATIVE, enable this. Same reasoning as the roll/pitch/heading inverts - the chip's axis handedness isn't knowable from code.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
         "name": "icmAccRange",
         "label": "Accelerometer range",
         "type": "list",

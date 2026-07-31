@@ -99,6 +99,7 @@ class Icm20948WebData
     bool headingValid = false;
     double accXg = 0, accYg = 0, accZg = 0; // raw accelerometer, g
     bool dmpActive = false;
+    double rotDegPerSec = 0; // rate of turn, deg/s, positive = starboard (after invert)
 public:
     Icm20948WebData() { lock = xSemaphoreCreateMutex(); }
     ~Icm20948WebData() { vSemaphoreDelete(lock); }
@@ -129,6 +130,11 @@ public:
         GWSYNCHRONIZED(lock);
         dmpActive = active;
     }
+    void setRot(double degPerSec)
+    {
+        GWSYNCHRONIZED(lock);
+        rotDegPerSec = degPerSec;
+    }
     void toJson(GwJsonDocument &doc)
     {
         GWSYNCHRONIZED(lock);
@@ -143,6 +149,7 @@ public:
         doc["accY"] = accYg;
         doc["accZ"] = accZg;
         doc["dmpActive"] = dmpActive;
+        doc["rot"] = rotDegPerSec;
     }
 };
 
@@ -186,7 +193,7 @@ static void runIcm20948Task(GwApi *api)
     // 404 while we're still retrying / if the sensor is missing.
     api->registerRequestHandler("data", [&webData](AsyncWebServerRequest *request)
                                 {
-        GwJsonDocument doc(256);
+        GwJsonDocument doc(320);
         webData.toJson(doc);
         String out;
         serializeJson(doc, out);
@@ -305,6 +312,25 @@ static void runIcm20948Task(GwApi *api)
         double accZ = imu.accZ();
         // accX/Y/Z from the library are in mg (milli-g) - report in g.
         webData.setAccel(accX / 1000.0, accY / 1000.0, accZ / 1000.0);
+
+        // Rate of Turn (PGN 127251) - a direct gyro reading, not derived
+        // from the (slower, smoothed) heading value, so it responds
+        // immediately to an actual turn. Independent of dmpOk/DMP fusion -
+        // the raw gyro Z axis is available every cycle regardless.
+        bool sendRot = true, rotInvert = false;
+        config->getValue(sendRot, GwConfigDefinitions::icmSendRot, true);
+        config->getValue(rotInvert, GwConfigDefinitions::icmRotInv, false);
+        double rotDegPerSec = imu.gyrZ(); // degrees/second
+        if (rotInvert)
+            rotDegPerSec = -rotDegPerSec;
+        webData.setRot(rotDegPerSec);
+        if (sendRot)
+        {
+            tN2kMsg rotMsg;
+            SetN2kRateOfTurn(rotMsg, sid, radians(rotDegPerSec));
+            api->sendN2kMessage(rotMsg);
+            sid = (sid + 1) % 252;
+        }
 
         if (dmpOk)
         {
