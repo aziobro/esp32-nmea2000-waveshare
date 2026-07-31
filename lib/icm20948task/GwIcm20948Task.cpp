@@ -283,6 +283,17 @@ static void runIcm20948Task(GwApi *api)
     bool haveDmpSample = false;
     double dmpRollRad = 0, dmpPitchRad = 0, dmpYawRad = 0;
 
+    // Calibrated heading from the end of the previous loop iteration, fed
+    // into the Attitude PGN's Yaw field below (one cycle stale, at 10Hz
+    // default that's ~100ms - negligible). Some chartplotters treat the
+    // whole Attitude message as incomplete/stale when Yaw is explicitly
+    // N/A and won't update their Roll/Pitch ("heel") display at all, even
+    // though Roll/Pitch themselves are present and valid - supplying the
+    // same calibrated heading already being sent via PGN 127250 avoids
+    // that, rather than leaving Yaw perpetually N/A.
+    double lastHeadingRad = 0;
+    bool haveLastHeading = false;
+
     while (true)
     {
         delay(loopDelayMs);
@@ -371,7 +382,7 @@ static void runIcm20948Task(GwApi *api)
             if (sendAttitude)
             {
                 tN2kMsg msg;
-                SetN2kAttitude(msg, sid, N2kDoubleNA, radians(pitchDeg), radians(rollDeg));
+                SetN2kAttitude(msg, sid, haveLastHeading ? lastHeadingRad : N2kDoubleNA, radians(pitchDeg), radians(rollDeg));
                 api->sendN2kMessage(msg);
                 sid = (sid + 1) % 252;
             }
@@ -446,6 +457,8 @@ static void runIcm20948Task(GwApi *api)
                 rawHeadingDeg = -rawHeadingDeg;
             double headingDeg = wrapDeg360(rawHeadingDeg + hdgOffsetDeg);
             webData.setHeading(headingDeg);
+            lastHeadingRad = radians(headingDeg);
+            haveLastHeading = true;
             // icmHdgOff is "calval" with eval "-v", same convention as roll/pitch.
             api->setCalibrationValue(GwConfigDefinitions::icmHdgOff, rawHeadingDeg);
 
