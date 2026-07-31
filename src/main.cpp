@@ -427,7 +427,7 @@ public:
 protected:
   virtual void processRequest()
   {
-    GwJsonDocument status(305 + 
+    GwJsonDocument status(450 +
       countNMEA2KIn.getJsonSize()+
       countNMEA2KOut.getJsonSize() +
       channels.getJsonSize()+
@@ -458,6 +458,16 @@ protected:
       }
     }
     status["n2kstate"]=NMEA2000.stateStr(driverState);
+    status["n2krxerr"]=n2kState.rx_errors;
+    status["n2ktxerr"]=n2kState.tx_errors;
+    status["n2ktxfail"]=n2kState.tx_failed;
+    status["n2krxmiss"]=n2kState.rx_missed;
+    status["n2krxoverrun"]=n2kState.rx_overrun;
+    status["n2ktxtimeout"]=n2kState.tx_timeouts;
+    {
+      unsigned long lastRec=NMEA2000.getLastRecoveryStart();
+      status["n2klastrecoveryago"]=lastRec>0?(long)(millis()-lastRec):-1;
+    }
     status["n2knode"]=NodeAddress;
     status["minUser"]=MIN_USER_TASK;
     //nmea0183Converter->toJson(status);
