@@ -56,19 +56,34 @@ class Dst810ScanCallbacks : public NimBLEScanCallbacks
 {
     Dst810FoundAddress *target;
     String namePrefix;
+    String lockedAddress; // if non-empty, only this exact address matches - namePrefix is ignored
     GwLog *logger;
 
 public:
     Dst810ScanCallbacks(Dst810FoundAddress *target, GwLog *logger) : target(target), logger(logger) {}
     void setNamePrefix(const String &prefix) { namePrefix = prefix; }
+    void setLockedAddress(const String &addr) { lockedAddress = addr; }
     void onResult(const NimBLEAdvertisedDevice *advertisedDevice) override
     {
+        String addr = advertisedDevice->getAddress().toString().c_str();
+        if (lockedAddress.length() > 0)
+        {
+            // Locked to a specific, previously-learned sensor (see
+            // dst810Addr) - ignore the name filter entirely, only this
+            // exact address matches. Handles multiple DST810-like
+            // sensors being in range at once (e.g. a neighboring boat's).
+            if (!addr.equalsIgnoreCase(lockedAddress))
+                return;
+            LOG_DEBUG(GwLog::LOG, "DST810 scan matched locked address %s", addr.c_str());
+            target->set(advertisedDevice->getAddress());
+            return;
+        }
         if (!advertisedDevice->haveName())
             return;
         String name = advertisedDevice->getName().c_str();
         if (namePrefix.length() > 0 && !name.startsWith(namePrefix))
             return;
-        LOG_DEBUG(GwLog::LOG, "DST810 scan matched %s (%s)", name.c_str(), advertisedDevice->getAddress().toString().c_str());
+        LOG_DEBUG(GwLog::LOG, "DST810 scan matched %s (%s)", name.c_str(), addr.c_str());
         target->set(advertisedDevice->getAddress());
     }
 };
@@ -269,13 +284,17 @@ static void runDst810Task(GwApi *api)
 
     String namePrefix = "DST";
     config->getValue(namePrefix, GwConfigDefinitions::dst810Name, "DST");
+    String lockedAddress = "";
+    config->getValue(lockedAddress, GwConfigDefinitions::dst810Addr, "");
 
-    LOG_DEBUG(GwLog::LOG, "DST810 task starting, BLE name filter=%s", namePrefix.c_str());
+    LOG_DEBUG(GwLog::LOG, "DST810 task starting, BLE name filter=%s, locked address=%s",
+              namePrefix.c_str(), lockedAddress.length() > 0 ? lockedAddress.c_str() : "(none yet)");
     NimBLEDevice::init("");
 
     Dst810FoundAddress foundAddress;
     Dst810ScanCallbacks scanCallbacks(&foundAddress, logger);
     scanCallbacks.setNamePrefix(namePrefix);
+    scanCallbacks.setLockedAddress(lockedAddress);
 
     NimBLEScan *pScan = NimBLEDevice::getScan();
     pScan->setScanCallbacks(&scanCallbacks);
@@ -326,6 +345,21 @@ static void runDst810Task(GwApi *api)
                     {
                         LOG_DEBUG(GwLog::LOG, "DST810 connected and subscribed");
                         webData.setConnected(true);
+                        // First time connecting (no address locked yet) -
+                        // remember this specific sensor so future scans
+                        // only ever match it, even if another DST810-like
+                        // sensor comes into range later (e.g. a
+                        // neighboring boat's). No restart needed - this
+                        // only affects the NEXT scan/reconnect, and we're
+                        // already connected for this session.
+                        if (lockedAddress.length() == 0)
+                        {
+                            String newAddr = addr.toString().c_str();
+                            config->updateValue(GwConfigDefinitions::dst810Addr, newAddr);
+                            scanCallbacks.setLockedAddress(newAddr);
+                            lockedAddress = newAddr;
+                            LOG_DEBUG(GwLog::LOG, "DST810 locked to address %s for future scans", newAddr.c_str());
+                        }
                     }
                     else
                     {

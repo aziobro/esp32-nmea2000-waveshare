@@ -15,7 +15,18 @@
         "label": "BLE name filter",
         "type": "text",
         "default": "DST",
-        "description": "only connect to a BLE device whose advertised name starts with this - the DST810 advertises as something like \"DSTAF07CA\".",
+        "description": "only connect to a BLE device whose advertised name starts with this - the DST810 advertises as something like \"DSTAF07CA\". Only used until a specific sensor address has been learned below (see \"Locked sensor address\") - once locked, this filter is no longer consulted.",
+        "category": "dst810",
+        "capabilities": {
+            "dst810": "true"
+        }
+    },
+    {
+        "name": "dst810Addr",
+        "label": "Locked sensor address",
+        "type": "text",
+        "default": "",
+        "description": "the BLE address of the specific DST810 this gateway has connected to - filled in automatically the first time it connects (matched by name filter above), so that if multiple DST810-like sensors are ever in range (e.g. a neighboring boat's), it only ever reconnects to this same one instead of whichever answers first. Clear this field and Save to forget it and let it learn/bond with a different sensor again.",
         "category": "dst810",
         "capabilities": {
             "dst810": "true"
