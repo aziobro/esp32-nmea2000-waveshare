@@ -49,6 +49,15 @@ struct SourceCandidate
     bool valid = false;
     double headingDeg = 0;
     HeadingQuality quality = HeadingQuality::Invalid;
+
+    // Explicit constructors, not just relying on aggregate-init brace
+    // lists - a default member initializer makes this a non-aggregate
+    // under some toolchains' C++ standard defaults (confirmed the hard
+    // way with Mat3 in ImuCoordinateTransform: identical brace-init code
+    // compiled fine under the native test env but failed on the ESP32
+    // toolchain with "could not convert... to const SourceCandidate").
+    SourceCandidate() {}
+    SourceCandidate(bool v, double h, HeadingQuality q) : valid(v), headingDeg(h), quality(q) {}
 };
 
 struct SourceTransition

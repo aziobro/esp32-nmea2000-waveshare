@@ -115,9 +115,10 @@
         "name": "icmHdgOff",
         "label": "Heading calibration offset",
         "type": "calval",
-        "eval": "-v",
+        "eval": "wrap180(c - v)",
+        "evalInputLabel": "Known/actual heading (deg)",
         "default": "0",
-        "description": "degrees added to the (hard-iron corrected, possibly inverted) heading for fine calibration - do this AFTER the hard-iron offsets above. Point the bow at a precisely known heading, press the \"C\" button - it live-previews the offset that would make the display match 0/north; adjust the previewed number to match your actual known heading instead, then Set.",
+        "description": "degrees added to the (hard-iron corrected, possibly inverted) heading for fine calibration - do this AFTER the hard-iron offsets above. Point the bow at a precisely known heading, press the \"C\" button, type that known heading into the box - the preview automatically computes the correct offset from the live reading - then Set.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
@@ -188,6 +189,111 @@
         "max": 50,
         "check": "checkMinMax",
         "description": "how often to sample the sensor and send N2K Attitude/Heading, in Hz. The sensor itself already runs fast enough for this (magnetometer is configured for continuous 100Hz, accel/gyro run in continuous mode) - this is purely our own polling rate. Higher isn't free: more CAN bus traffic and I2C/CPU load, though at these rates that's still trivial for the ESP32-S3.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmOrientation",
+        "label": "Mounting orientation",
+        "type": "list",
+        "default": "0",
+        "list": [
+            {"l": "Forward (default - matches original wiring assumption)", "v": "0"},
+            {"l": "Starboard", "v": "1"},
+            {"l": "Aft", "v": "2"},
+            {"l": "Port", "v": "3"},
+            {"l": "Forward, upside-down", "v": "4"},
+            {"l": "Starboard, upside-down", "v": "5"},
+            {"l": "Aft, upside-down", "v": "6"},
+            {"l": "Port, upside-down", "v": "7"},
+            {"l": "Tilted mount 1", "v": "8"},
+            {"l": "Tilted mount 2", "v": "9"},
+            {"l": "Tilted mount 3", "v": "10"},
+            {"l": "Tilted mount 4", "v": "11"},
+            {"l": "Tilted mount 5", "v": "12"},
+            {"l": "Tilted mount 6", "v": "13"},
+            {"l": "Tilted mount 7", "v": "14"},
+            {"l": "Tilted mount 8", "v": "15"},
+            {"l": "Tilted mount 9 (upside-down)", "v": "16"},
+            {"l": "Tilted mount 10 (upside-down)", "v": "17"},
+            {"l": "Tilted mount 11 (upside-down)", "v": "18"},
+            {"l": "Tilted mount 12 (upside-down)", "v": "19"},
+            {"l": "Tilted mount 13 (upside-down)", "v": "20"},
+            {"l": "Tilted mount 14 (upside-down)", "v": "21"},
+            {"l": "Tilted mount 15 (upside-down)", "v": "22"},
+            {"l": "Tilted mount 16 (upside-down)", "v": "23"}
+        ],
+        "description": "which way the sensor is physically mounted relative to the boat. Forward (the default) reproduces the original wiring assumption exactly - changing this doesn't affect a currently-working installation unless you deliberately select a different value. The four flat options (Forward/Starboard/Aft/Port) are confirmed correct by construction; the 20 tilted/upside-down options are mathematically valid rotations but their exact real-world meaning is NOT yet confirmed against physical hardware - pick one, check the raw accelerometer/roll/pitch values on this tab against a known physical test (tilt the boat a known way), and correct if it doesn't match. See doc/IcmPhysicalTestProcedure.md.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmHeadingMode",
+        "label": "Heading source",
+        "type": "list",
+        "default": "dmp",
+        "list": [
+            {"l": "DMP (sensor fusion) - matches original behavior", "v": "dmp"},
+            {"l": "Software compass (tilt-compensated magnetometer)", "v": "software_compass"},
+            {"l": "Software 9-axis fusion (Mahony filter)", "v": "software_9axis_fusion"},
+            {"l": "Auto (prefers fusion, falls back to DMP, then compass)", "v": "auto"},
+            {"l": "Diagnostic only (compute but never transmit)", "v": "diagnostic_only"}
+        ],
+        "description": "which heading source drives PGN 127250 (subject to \"Send Magnetic Heading\" below still being on). Defaults to \"DMP\" specifically to match this task's original behavior (DMP yaw when sensor fusion is on) - unlike before, the DMP reading is now validated (staleness, quaternion sanity, disagreement with the independently-computed software compass) rather than trusted unconditionally, so a bad DMP sample now reports \"no heading\" instead of a wrong one. \"Auto\" is a deliberate opt-in, not the default, since it prefers the new software fusion source the moment it's valid - a currently-tuned installation's output shouldn't change just from this firmware update landing.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmSrcTransMs",
+        "label": "Heading source transition (ms)",
+        "type": "number",
+        "default": "1000",
+        "min": 0,
+        "max": 10000,
+        "check": "checkMinMax",
+        "description": "when the active heading source changes (e.g. Auto mode switching from compass to fusion once fusion converges), blend circularly over this many milliseconds instead of jumping instantly. 0 disables blending (instant switch). Provisional default.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmHdgFiltEn",
+        "label": "Enable heading smoothing filter",
+        "type": "boolean",
+        "default": "false",
+        "description": "smooths sample-to-sample heading noise from whichever source is active. Defaults OFF to exactly match the original code's behavior (no filtering happened before). A large jump (fast turn, or a source switch already handled by the transition blend above) always passes through unfiltered rather than being smoothed away.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmHdgFiltTau",
+        "label": "Heading filter time constant (s)",
+        "type": "number",
+        "default": "1.0",
+        "min": 0.05,
+        "max": 10,
+        "check": "checkMinMax",
+        "description": "how quickly the smoothing filter above tracks a genuine (small) heading change - responds faster automatically while the boat is actively turning. Only used when the filter is enabled. Provisional default.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
+        "name": "icmDevEnable",
+        "label": "Enable compass deviation table",
+        "type": "boolean",
+        "default": "false",
+        "description": "apply a boat-specific compass deviation table (built from a real compass swing against a trusted reference) on top of the hard-iron/soft-iron calibration and mounting offset above. Defaults OFF - no table exists until one is built via the web UI's deviation editor.",
         "category": "icm20948",
         "capabilities": {
             "icm20948": "true"
