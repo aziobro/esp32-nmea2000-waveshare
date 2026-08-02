@@ -389,16 +389,17 @@ def getLibs():
 
 
 def joinFiles(target,flist):
-    current=False
-    if os.path.exists(target):
-        current=True
-        for f in flist:
-            if not isCurrent(f,target):
-                current=False
-                break
-    if current:
-        print("%s is up to date"%target)
-        return
+    # NOTE: deliberately no mtime-based skip-if-current check here (unlike
+    # compressFile/generateFile). target lives in the shared, non-per-env
+    # lib/generated/ dir, but flist (custom_js/custom_css) varies per board
+    # env - an mtime check only looks at whether flist's files changed, not
+    # whether flist's MEMBERSHIP differs from whichever env last wrote
+    # target. Building env A then env B back-to-back left B silently
+    # embedding A's merged bundle, since none of B's own source files were
+    # newer than the target A had just written - a real bug that shipped a
+    # Garmin-bridge build missing its Calypso web tab. Always regenerating
+    # is cheap (a handful of small JS/CSS files) so it's not worth
+    # reintroducing a per-env-aware cache just to skip that.
     print("creating %s"%target)
     with gzip.open(target,"wb") as oh:
         for fn in flist:

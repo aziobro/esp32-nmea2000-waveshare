@@ -572,6 +572,9 @@
                 if (configItem.eval) {
                     let v = parseFloat(val);
                     let c = parseFloat(cfg);
+                    // available to eval strings that compute a target-relative
+                    // offset (e.g. "wrap180(c - v)") instead of just "-v"
+                    const wrap180 = (x) => { x = ((x % 360) + 360) % 360; return x > 180 ? x - 360 : x; };
                     return (eval(configItem.eval));
                 }
                 return v;
@@ -579,9 +582,12 @@
             let cs = document.getElementById("calval").cloneNode(true);
             cs.classList.remove("hidden");
             cs.querySelector(".heading").textContent = configItem.label || configItem.name;
+            cs.querySelector(".inputLabel").textContent = configItem.evalInputLabel || "config";
             let vel = cs.querySelector(".val");
             let vinp = cs.querySelector("input");
-            vinp.value = el.value;
+            // fields with their own evalInputLabel expect a fresh target value
+            // (e.g. "enter your known heading"), not the field's current value
+            vinp.value = configItem.evalInputLabel ? "" : el.value;
             if (caliv != 0) window.clearInterval(caliv);
             caliv = window.setInterval(() => {
                 if (document.body.contains(cs)) {
@@ -605,7 +611,12 @@
             }, 200);
             showOverlay(cs, false, [{
                 label: 'Set', click: () => {
-                    el.value = vinp.value;
+                    // use the live-computed preview (what the eval formula
+                    // produced), not the raw target value typed into the box -
+                    // for plain "-v" fields (roll/pitch) this is the same
+                    // number the user would otherwise have had to retype
+                    let computed = parseFloat(vel.textContent);
+                    el.value = isNaN(computed) ? vinp.value : vel.textContent;
                     let cev = new Event('change');
                     el.dispatchEvent(cev);
                 }

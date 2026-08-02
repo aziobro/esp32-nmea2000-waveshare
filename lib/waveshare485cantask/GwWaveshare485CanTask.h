@@ -26,7 +26,8 @@
    - BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN: external TTL<->RS422
      transceiver on a plain UART, bridging a Garmin chartplotter's NMEA0183
      port onto this device's NMEA2000 bus (no custom task needed - see the
-     Serial2 block below, it's the core's existing second-channel mechanism)
+     Serial2 block below, it's the core's existing second-channel mechanism),
+     plus a Calypso Ultrasonic wind sensor over BLE (lib/calypsotask)
    - BOARD_WAVESHARE_ESP32S3_RS485_CAN_AIS: direct TTL UART connection to
      an AIS unit's own UART (receive-only, no custom task needed either -
      same Serial2 mechanism, AIS's "!--VDM"/"!--VDO" sentences are already
@@ -120,10 +121,18 @@
 // RS422 transceiver has independent driver/receiver circuits that are
 // always both active - no shared pair, no direction/enable pin to manage.
 // Garmin configured for its "high speed" NMEA0183 setting -> 38400 baud.
+//
+// Baud deliberately NOT fixed via GWSERIAL2_BAUD here (unlike the AIS
+// board's Serial2, which is): leaving it undefined means
+// lib/channel/GwChannelList.cpp's preinit() skips locking the config
+// item read-only, so "serial2 baud rate" is a normal editable field on
+// the web UI's Config page (category "serial2 port") - useful while
+// bench-testing whether a slower rate is more tolerant of a marginal
+// RS422 link. Whatever's picked there must still match the Garmin's own
+// NMEA0183 port speed setting on the plotter itself.
 #define GWSERIAL2_TX GPIO_NUM_2
 #define GWSERIAL2_RX GPIO_NUM_1
 #define GWSERIAL2_TYPE GWSERIAL_TYPE_BI
-#define GWSERIAL2_BAUD 38400
 
 // This unit's whole purpose is being a GPS/position source on N2K (the
 // Garmin's position data, bridged in over the RS422 link above) - declare
@@ -134,6 +143,12 @@
 // function, not just by which PGNs are present on the bus.
 #define N2K_DEVICE_CLASS 60
 #define N2K_DEVICE_FUNCTION 145
+
+// Calypso Ultrasonic wind sensor over BLE (lib/calypsotask) - no pins
+// needed, just enables the BLE-central task on this unit. BLE-central
+// (Calypso) and WiFi already coexist fine on this chip - proven by the
+// IMU unit's DST810 integration, same ESP32-S3.
+#define GWCALYPSO_ENABLE
 #endif
 
 #ifdef BOARD_WAVESHARE_ESP32S3_RS485_CAN_AIS

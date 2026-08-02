@@ -1,0 +1,46 @@
+[
+    {
+        "name": "calypsoEnable",
+        "label": "Connect to Calypso wind sensor (BLE)",
+        "type": "boolean",
+        "default": "true",
+        "description": "scan for and connect to a Calypso Ultrasonic (LCJ Capteurs) wireless masthead wind sensor over Bluetooth LE. No pairing needed - the sensor streams a binary reading once connected.",
+        "category": "calypso",
+        "capabilities": {
+            "calypso": "true"
+        }
+    },
+    {
+        "name": "calypsoName",
+        "label": "BLE name filter",
+        "type": "text",
+        "default": "ULTRASONIC",
+        "description": "only connect to a BLE device whose advertised name starts with this - every Calypso Ultrasonic advertises the identical name \"ULTRASONIC\" (unlike the DST810, there's no per-unit suffix to tell two of them apart by name alone). Only used until a specific sensor address has been learned below (see \"Locked sensor address\") - once locked, this filter is no longer consulted.",
+        "category": "calypso",
+        "capabilities": {
+            "calypso": "true"
+        }
+    },
+    {
+        "name": "calypsoAddr",
+        "label": "Locked sensor address",
+        "type": "text",
+        "default": "",
+        "description": "the BLE address of the specific Calypso this gateway has connected to - filled in automatically the first time it connects, so that if another Calypso-like sensor is ever in range (e.g. a neighboring boat's - all advertise the same name), it only ever reconnects to this same one. Especially important for this sensor since the name filter alone can't tell two apart. Clear this field and Save to forget it and let it bond with a different sensor again.",
+        "category": "calypso",
+        "capabilities": {
+            "calypso": "true"
+        }
+    },
+    {
+        "name": "calypsoSendWind",
+        "label": "Send Wind Data (130306)",
+        "type": "boolean",
+        "default": "true",
+        "description": "send NMEA2000 Wind Data (apparent wind speed/angle) from the Calypso's readings.",
+        "category": "calypso",
+        "capabilities": {
+            "calypso": "true"
+        }
+    }
+]
