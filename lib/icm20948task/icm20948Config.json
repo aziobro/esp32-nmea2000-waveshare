@@ -289,6 +289,20 @@
         }
     },
     {
+        "name": "icmHdgHoldMs",
+        "label": "Heading holdover duration (ms)",
+        "type": "number",
+        "default": "5000",
+        "min": 0,
+        "max": 60000,
+        "check": "checkMinMax",
+        "description": "when every heading source is momentarily lost (e.g. a magnetic disturbance), keep reporting a heading estimated by integrating the gyro's rate of turn for up to this many milliseconds, instead of immediately reporting no heading. This gyro-only estimate is never sent as PGN 127250 (see \"Send Magnetic Heading\" above) - it's a time-limited guess, not a sensor reading - but is shown on the IMU tab and logged, clearly marked as holdover. Set to 0 to disable holdover entirely (reverts to reporting no heading the instant every source is lost). Provisional default.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
         "name": "icmHdgFiltTau",
         "label": "Heading filter time constant (s)",
         "type": "number",

@@ -177,6 +177,94 @@ void test_mag_disturbance_state_reported(void)
     TEST_ASSERT_TRUE(out.magMagnitude > 1000.0);
 }
 
+void test_holdover_engages_when_pinned_dmp_source_is_lost(void)
+{
+    ImuCycleProcessor proc;
+    Quaternion level = ImuQuaternion::fromEuler(0, 0, 0);
+
+    ImuCycleOutput out;
+    unsigned long t = 100000;
+    for (int i = 0; i < 5; i++)
+    {
+        ImuCycleInput in = levelInput();
+        in.headingMode = HeadingSourceMode::Dmp; // pinned - no compass/fusion fallback
+        in.dmpOk = true;
+        in.haveDmpSample = true;
+        in.dmpFreshThisCycle = true;
+        in.dmpQuat = level;
+        in.dmpAgeMs = 10;
+        in.nowMs = t;
+        t += 100;
+        out = proc.process(in);
+    }
+    TEST_ASSERT_TRUE(out.headingValid);
+    TEST_ASSERT_FALSE(out.headingHoldover);
+
+    // Now lose DMP entirely - stale samples (age well beyond
+    // DmpValidationConfig's default maxSampleAgeMs of 500ms).
+    for (int i = 0; i < 3; i++)
+    {
+        ImuCycleInput in = levelInput();
+        in.headingMode = HeadingSourceMode::Dmp;
+        in.dmpOk = true;
+        in.haveDmpSample = true;
+        in.dmpFreshThisCycle = false;
+        in.dmpQuat = level;
+        in.dmpAgeMs = 5000;
+        in.nowMs = t;
+        t += 100;
+        out = proc.process(in);
+    }
+    // Confirms several Phase 8 requirements at once: a lost source
+    // doesn't immediately report invalid (holdover bridges it), the
+    // holdover is clearly identified (headingHoldover=true), and the raw
+    // selector's own reporting (headingSource) correctly shows no source
+    // is actually active right now.
+    TEST_ASSERT_TRUE(out.headingValid);
+    TEST_ASSERT_TRUE(out.headingHoldover);
+    TEST_ASSERT_TRUE(out.headingSource == HeadingSource::None);
+}
+
+void test_roll_pitch_continue_independently_of_heading_holdover(void)
+{
+    // Roll/pitch validity must never depend on whether the heading is
+    // currently tracking, in holdover, or lost - it's DMP-euler-derived
+    // (or accel-tilt) and computed unconditionally every cycle.
+    ImuCycleProcessor proc;
+    Quaternion level = ImuQuaternion::fromEuler(0, 0, 0);
+
+    unsigned long t = 100000;
+    for (int i = 0; i < 5; i++)
+    {
+        ImuCycleInput in = levelInput();
+        in.headingMode = HeadingSourceMode::Dmp;
+        in.dmpOk = true;
+        in.haveDmpSample = true;
+        in.dmpFreshThisCycle = true;
+        in.dmpQuat = level;
+        in.dmpAgeMs = 10;
+        in.nowMs = t;
+        t += 100;
+        proc.process(in);
+    }
+
+    // Lose heading (DMP stale) for several cycles - attitude must stay valid throughout.
+    for (int i = 0; i < 5; i++)
+    {
+        ImuCycleInput in = levelInput();
+        in.headingMode = HeadingSourceMode::Dmp;
+        in.dmpOk = true;
+        in.haveDmpSample = true;
+        in.dmpFreshThisCycle = false;
+        in.dmpQuat = level;
+        in.dmpAgeMs = 5000;
+        in.nowMs = t;
+        t += 100;
+        ImuCycleOutput out = proc.process(in);
+        TEST_ASSERT_TRUE_MESSAGE(out.attitudeValid, "roll/pitch must stay valid even while heading is lost/holdover");
+    }
+}
+
 void test_fusion_duration_reported(void)
 {
     ImuCycleProcessor proc;
@@ -201,6 +289,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_fusion_invalid_before_settle_time);
     RUN_TEST(test_rot_filter_smooths_across_cycles);
     RUN_TEST(test_mag_disturbance_state_reported);
+    RUN_TEST(test_holdover_engages_when_pinned_dmp_source_is_lost);
+    RUN_TEST(test_roll_pitch_continue_independently_of_heading_holdover);
     RUN_TEST(test_fusion_duration_reported);
     return UNITY_END();
 }

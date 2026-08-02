@@ -6,6 +6,7 @@
 #include "ImuHeadingSource.h"
 #include "ImuMagMonitor.h"
 #include "ImuHeadingFilter.h"
+#include "ImuHeadingHoldover.h"
 #include "ImuAngleMath.h"
 
 /*
@@ -66,6 +67,11 @@ struct ImuCycleInput
 
     bool rotInvert = false;
     double rotFiltAlpha = 1.0;
+
+    // Bridges brief total-loss-of-heading-source gaps via gyro dead
+    // reckoning - see ImuHeadingHoldover.h. Defaults to that struct's own
+    // defaults if the caller doesn't set it.
+    HeadingHoldoverConfig headingHoldoverConfig;
 };
 
 struct ImuCycleOutput
@@ -88,6 +94,14 @@ struct ImuCycleOutput
     HeadingSource headingSource = HeadingSource::None;
     HeadingQuality headingQuality = HeadingQuality::Invalid;
     uint32_t rejectionFlags = HR_NONE;
+
+    // True only while actively gyro-dead-reckoning through a total loss
+    // of every heading source (see ImuHeadingHoldover.h) - the "clearly
+    // identified gyro-only continuation" flag. Deliberately excluded
+    // from PGN 127250 transmission by the task layer - see
+    // GwIcm20948Task.cpp's send gate and doc/IcmHeadingValidityAudit.md.
+    bool headingHoldover = false;
+    HeadingHoldoverState headingHoldoverState = HeadingHoldoverState::Lost;
 
     Vec3 magCorrected;
     double magMagnitude = 0;
@@ -119,6 +133,7 @@ private:
     HeadingSourceSelector sourceSelector;
     MagMonitor magMonitor;
     HeadingFilter headingFilter;
+    ImuHeadingHoldover headingHoldover;
     ImuAngleMath::UnwrappedAccumulator headingAccumulator;
 
     double filteredRotDegPerSec = 0;

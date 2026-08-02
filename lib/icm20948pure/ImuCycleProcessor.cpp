@@ -119,14 +119,26 @@ ImuCycleOutput ImuCycleProcessor::process(const ImuCycleInput &in)
     out.rawFusionHeadingDeg = rawFusionHeadingDeg;
     out.fusionCandidateValid = fusionValid;
     out.headingSource = selResult.source;
-    out.headingQuality = selResult.quality;
     out.rejectionFlags = rejFlags;
-    out.preCorrectionHeadingDeg = selResult.headingDeg;
 
-    bool haveHeadingSample = selResult.valid;
+    // Bridges a total loss of every heading source (selResult.valid ==
+    // false) via bounded gyro dead reckoning rather than reporting "no
+    // heading" the instant every candidate drops out - see
+    // ImuHeadingHoldover.h. Source-agnostic: it doesn't know or care
+    // WHY selResult was invalid (magnetic disturbance, DMP staleness,
+    // anything else), so it can't be "poisoned" by any particular cause.
+    ImuHeadingHoldover::Result holdoverResult = headingHoldover.update(
+        selResult.valid, selResult.headingDeg, selResult.quality, rotDegPerSec, in.dtSec, (uint32_t)in.nowMs, in.headingHoldoverConfig);
+
+    out.headingQuality = holdoverResult.quality;
+    out.headingHoldover = holdoverResult.gyroOnly;
+    out.headingHoldoverState = holdoverResult.state;
+    out.preCorrectionHeadingDeg = holdoverResult.headingDeg;
+
+    bool haveHeadingSample = holdoverResult.valid;
     if (haveHeadingSample)
     {
-        double corrected = in.hdgInvert ? -selResult.headingDeg : selResult.headingDeg;
+        double corrected = in.hdgInvert ? -holdoverResult.headingDeg : holdoverResult.headingDeg;
         corrected = ImuAngleMath::wrap360(corrected + in.hdgOffsetDeg);
         if (in.deviationEnabled)
         {

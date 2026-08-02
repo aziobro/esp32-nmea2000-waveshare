@@ -105,6 +105,19 @@ static const char *headingQualityName(HeadingQuality q)
     }
 }
 
+static const char *headingHoldoverStateName(HeadingHoldoverState s)
+{
+    switch (s)
+    {
+    case HeadingHoldoverState::Tracking:
+        return "tracking";
+    case HeadingHoldoverState::Holdover:
+        return "holdover";
+    default:
+        return "lost";
+    }
+}
+
 // Thread-safe holder for the values our web request handler serves - the
 // handler runs on the webserver's thread while runIcm20948Task updates it,
 // same pattern as ExampleWebData in lib/exampletask/GwExampleTask.cpp.
@@ -136,6 +149,8 @@ class Icm20948WebData
     double magRawX = 0, magRawY = 0, magRawZ = 0;
     double magBoatX = 0, magBoatY = 0, magBoatZ = 0;
     double magCorrX = 0, magCorrY = 0, magCorrZ = 0;
+    bool headingHoldover = false;
+    String headingHoldoverState = "lost";
 
 public:
     Icm20948WebData() { lock = xSemaphoreCreateMutex(); }
@@ -185,7 +200,7 @@ public:
     }
     void setDiagnostics(HeadingSource src, HeadingQuality q, uint32_t rejFlags, double magMag,
                          double dmpHdg, bool dmpValid, double compassHdg, double fusionHdg, bool fusOk,
-                         MagDisturbanceState mState)
+                         MagDisturbanceState mState, bool holdover, HeadingHoldoverState holdoverState)
     {
         GWSYNCHRONIZED(lock);
         headingSource = headingSourceName(src);
@@ -198,6 +213,8 @@ public:
         fusionHeadingDeg = fusionHdg;
         fusionValid = fusOk;
         magState = mState;
+        headingHoldover = holdover;
+        headingHoldoverState = headingHoldoverStateName(holdoverState);
     }
     void setMagRaw(const Vec3 &raw, const Vec3 &boat, const Vec3 &corrected)
     {
@@ -239,6 +256,8 @@ public:
         doc["fusionHeading"] = fusionHeadingDeg;
         doc["fusionValid"] = fusionValid;
         doc["magDisturbed"] = (magState == MagDisturbanceState::Disturbed);
+        doc["headingHoldover"] = headingHoldover;
+        doc["headingHoldoverState"] = headingHoldoverState;
         doc["magRawX"] = magRawX;
         doc["magRawY"] = magRawY;
         doc["magRawZ"] = magRawZ;
@@ -459,6 +478,9 @@ static void runIcm20948Task(GwApi *api)
         config->getValue(filterEnabled, GwConfigDefinitions::icmHdgFiltEn, false);
         config->getValue(filterTimeConstant, GwConfigDefinitions::icmHdgFiltTau, 1.0f);
 
+        int hdgHoldoverMs = 5000;
+        config->getValue(hdgHoldoverMs, GwConfigDefinitions::icmHdgHoldMs, 5000);
+
         bool deviationEnabled = false;
         config->getValue(deviationEnabled, GwConfigDefinitions::icmDevEnable, false);
 
@@ -578,6 +600,7 @@ static void runIcm20948Task(GwApi *api)
         cycleIn.filterTimeConstantSec = filterTimeConstant;
         cycleIn.rotInvert = rotInvert;
         cycleIn.rotFiltAlpha = rotFiltAlpha;
+        cycleIn.headingHoldoverConfig.maxHoldoverMs = (double)hdgHoldoverMs;
 
         unsigned long processingStartUs = micros();
         ImuCycleOutput cycleOut = cycleProcessor.process(cycleIn);
@@ -633,7 +656,11 @@ static void runIcm20948Task(GwApi *api)
             haveLastHeading = true;
             api->setCalibrationValue(GwConfigDefinitions::icmHdgOff, cycleOut.preCorrectionHeadingDeg);
 
-            if (sendHeading && headingMode != HeadingSourceMode::DiagnosticOnly)
+            // headingHoldover excluded on purpose: a gyro-dead-reckoned
+            // estimate is not a sensor reading and is never sent as PGN
+            // 127250, regardless of "Send Magnetic Heading" - see
+            // doc/IcmHeadingValidityAudit.md.
+            if (sendHeading && headingMode != HeadingSourceMode::DiagnosticOnly && !cycleOut.headingHoldover)
             {
                 unsigned long t0 = micros();
                 tN2kMsg hdgMsg;
@@ -652,7 +679,7 @@ static void runIcm20948Task(GwApi *api)
 
         webData.setDiagnostics(cycleOut.headingSource, cycleOut.headingQuality, cycleOut.rejectionFlags, cycleOut.magMagnitude,
                                 cycleOut.rawDmpHeadingDeg, cycleOut.dmpCandidateValid, cycleOut.rawCompassHeadingDeg, cycleOut.rawFusionHeadingDeg,
-                                cycleOut.fusionCandidateValid, cycleOut.magDisturbanceState);
+                                cycleOut.fusionCandidateValid, cycleOut.magDisturbanceState, cycleOut.headingHoldover, cycleOut.headingHoldoverState);
 
         // --- Diagnostic CSV capture (Phase 2) - offerSample() is a
         // cheap, non-blocking queue push that no-ops entirely unless
