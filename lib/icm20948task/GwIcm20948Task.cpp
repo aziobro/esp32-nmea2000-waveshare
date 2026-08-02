@@ -132,6 +132,9 @@ class Icm20948WebData
     double fusionHeadingDeg = 0;
     bool fusionValid = false;
     MagDisturbanceState magState = MagDisturbanceState::Unknown;
+    double magRawX = 0, magRawY = 0, magRawZ = 0;
+    double magBoatX = 0, magBoatY = 0, magBoatZ = 0;
+    double magCorrX = 0, magCorrY = 0, magCorrZ = 0;
 
 public:
     Icm20948WebData() { lock = xSemaphoreCreateMutex(); }
@@ -195,6 +198,19 @@ public:
         fusionValid = fusOk;
         magState = mState;
     }
+    void setMagRaw(const Vec3 &raw, const Vec3 &boat, const Vec3 &corrected)
+    {
+        GWSYNCHRONIZED(lock);
+        magRawX = raw.x;
+        magRawY = raw.y;
+        magRawZ = raw.z;
+        magBoatX = boat.x;
+        magBoatY = boat.y;
+        magBoatZ = boat.z;
+        magCorrX = corrected.x;
+        magCorrY = corrected.y;
+        magCorrZ = corrected.z;
+    }
     void toJson(GwJsonDocument &doc)
     {
         GWSYNCHRONIZED(lock);
@@ -222,6 +238,15 @@ public:
         doc["fusionHeading"] = fusionHeadingDeg;
         doc["fusionValid"] = fusionValid;
         doc["magDisturbed"] = (magState == MagDisturbanceState::Disturbed);
+        doc["magRawX"] = magRawX;
+        doc["magRawY"] = magRawY;
+        doc["magRawZ"] = magRawZ;
+        doc["magBoatX"] = magBoatX;
+        doc["magBoatY"] = magBoatY;
+        doc["magBoatZ"] = magBoatZ;
+        doc["magCorrX"] = magCorrX;
+        doc["magCorrY"] = magCorrY;
+        doc["magCorrZ"] = magCorrZ;
     }
 };
 
@@ -459,6 +484,7 @@ static void runIcm20948Task(GwApi *api)
         double magMagnitude = magCal.norm();
         MagMonitorConfig magCfg;
         magMonitor.update(magCal, magCfg);
+        webData.setMagRaw(hw.readMagRaw(), magBoat, magCal);
 
         // --- DMP sample (if enabled/available) ---
         bool dmpFreshThisCycle = false;
