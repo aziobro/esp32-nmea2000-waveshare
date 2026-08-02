@@ -32,6 +32,13 @@ The binary lands at `.pio/build/icm20948_native_test/program`. Run it
 directly from there with real arguments (below) - `--without-testing`
 just builds it without PlatformIO's test runner invoking it with no args.
 
+**That `program` path is shared by every `test/test_*` suite** - a full
+`pio test -e icm20948_native_test` run (no `-f` filter) rebuilds and
+overwrites it once per suite, so after a full-suite run it's whatever
+suite happened to build last, not this tool. Re-run the build command
+above immediately before using the binary if you've run the full suite
+in between.
+
 ## Usage
 
 ```
