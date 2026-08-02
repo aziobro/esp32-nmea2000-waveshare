@@ -251,6 +251,79 @@ public:
     }
 };
 
+// Lightweight, always-on per-cycle timing/resource counters for the
+// Performance web panel - see doc/IcmPerformanceReview.md. Deliberately
+// not behind a config toggle: the overhead is a handful of micros()/
+// FreeRTOS calls per cycle (no allocation), negligible next to the
+// hundreds of microseconds the pipeline itself takes, so there's no real
+// case for letting it be switched off.
+class Icm20948PerfStats
+{
+    SemaphoreHandle_t lock;
+    uint32_t sensorReadUs = 0, sensorReadMaxUs = 0;
+    uint32_t processingUs = 0, processingMaxUs = 0;
+    uint32_t fusionUs = 0, fusionMaxUs = 0;
+    uint32_t loggingEnqueueUs = 0, loggingEnqueueMaxUs = 0;
+    uint32_t nmeaSendUs = 0, nmeaSendMaxUs = 0;
+    uint32_t totalLoopUs = 0, totalLoopMaxUs = 0;
+    uint32_t missedDeadlines = 0;
+    uint32_t fifoFramesDrained = 0, fifoOverflows = 0;
+    uint32_t freeHeapBytes = 0, minFreeHeapEverBytes = 0;
+    uint32_t stackHighWaterMarkBytes = 0;
+
+public:
+    Icm20948PerfStats() { lock = xSemaphoreCreateMutex(); }
+    ~Icm20948PerfStats() { vSemaphoreDelete(lock); }
+
+    void update(uint32_t sensorUs, uint32_t procUs, uint32_t fusUs, uint32_t logUs, uint32_t nmeaUs,
+                uint32_t totalUs, bool missedDeadline, uint32_t framesDrained, uint32_t overflows,
+                uint32_t freeHeap, uint32_t minFreeHeapEver, uint32_t stackHighWaterBytes)
+    {
+        GWSYNCHRONIZED(lock);
+        sensorReadUs = sensorUs;
+        if (sensorUs > sensorReadMaxUs) sensorReadMaxUs = sensorUs;
+        processingUs = procUs;
+        if (procUs > processingMaxUs) processingMaxUs = procUs;
+        fusionUs = fusUs;
+        if (fusUs > fusionMaxUs) fusionMaxUs = fusUs;
+        loggingEnqueueUs = logUs;
+        if (logUs > loggingEnqueueMaxUs) loggingEnqueueMaxUs = logUs;
+        nmeaSendUs = nmeaUs;
+        if (nmeaUs > nmeaSendMaxUs) nmeaSendMaxUs = nmeaUs;
+        totalLoopUs = totalUs;
+        if (totalUs > totalLoopMaxUs) totalLoopMaxUs = totalUs;
+        if (missedDeadline) missedDeadlines++;
+        fifoFramesDrained = framesDrained;
+        fifoOverflows = overflows;
+        freeHeapBytes = freeHeap;
+        minFreeHeapEverBytes = minFreeHeapEver;
+        stackHighWaterMarkBytes = stackHighWaterBytes;
+    }
+
+    void toJson(GwJsonDocument &doc)
+    {
+        GWSYNCHRONIZED(lock);
+        doc["sensorReadUs"] = sensorReadUs;
+        doc["sensorReadMaxUs"] = sensorReadMaxUs;
+        doc["processingUs"] = processingUs;
+        doc["processingMaxUs"] = processingMaxUs;
+        doc["fusionUs"] = fusionUs;
+        doc["fusionMaxUs"] = fusionMaxUs;
+        doc["loggingEnqueueUs"] = loggingEnqueueUs;
+        doc["loggingEnqueueMaxUs"] = loggingEnqueueMaxUs;
+        doc["nmeaSendUs"] = nmeaSendUs;
+        doc["nmeaSendMaxUs"] = nmeaSendMaxUs;
+        doc["totalLoopUs"] = totalLoopUs;
+        doc["totalLoopMaxUs"] = totalLoopMaxUs;
+        doc["missedDeadlines"] = missedDeadlines;
+        doc["fifoFramesDrained"] = fifoFramesDrained;
+        doc["fifoOverflows"] = fifoOverflows;
+        doc["freeHeapBytes"] = freeHeapBytes;
+        doc["minFreeHeapEverBytes"] = minFreeHeapEverBytes;
+        doc["stackHighWaterMarkBytes"] = stackHighWaterMarkBytes;
+    }
+};
+
 static void runIcm20948Task(GwApi *api)
 {
     GwLog *logger = api->getLogger();
@@ -261,6 +334,15 @@ static void runIcm20948Task(GwApi *api)
                                 {
         GwJsonDocument doc(640);
         webData.toJson(doc);
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out); });
+
+    Icm20948PerfStats perfStats;
+    api->registerRequestHandler("perfStatus", [&perfStats](AsyncWebServerRequest *request)
+                                 {
+        GwJsonDocument doc(384);
+        perfStats.toJson(doc);
         String out;
         serializeJson(doc, out);
         request->send(200, "application/json", out); });
@@ -326,6 +408,12 @@ static void runIcm20948Task(GwApi *api)
         delay(loopDelayMs);
         if (!hw.dataReady())
             continue;
+
+        unsigned long loopStartUs = micros();
+        unsigned long sensorReadUs = 0;
+        unsigned long nmeaSendUs = 0;
+
+        unsigned long sensorReadStartUs = micros();
         hw.readAGMT();
 
         unsigned long nowMs = millis();
@@ -387,6 +475,7 @@ static void runIcm20948Task(GwApi *api)
         Vec3 accelBoat = ImuCoordinateTransform::toBoatFrame(hw.readAccelG(), orientation);
         Vec3 gyroBoat = ImuCoordinateTransform::toBoatFrame(hw.readGyroDegPerSec(), orientation);
         Vec3 magBoat = ImuCoordinateTransform::toBoatFrame(hw.readMagRaw(), orientation);
+        sensorReadUs += micros() - sensorReadStartUs;
         webData.setAccel(accelBoat.x, accelBoat.y, accelBoat.z);
 
         // --- Calibration (moved ahead of Rate of Turn so gyro bias
@@ -424,8 +513,11 @@ static void runIcm20948Task(GwApi *api)
                 }
             }
         }
-        ImuCalibration cal = cachedCal;
-        Vec3 gyroCal = ImuCalibrationOps::applyGyro(gyroBoat, cal);
+        // Use cachedCal directly rather than copying it into a local first
+        // (applyGyro takes it by const reference, and cycleIn.cal below
+        // can be assigned straight from it too) - one ImuCalibration copy
+        // per cycle instead of two (see doc/IcmPerformanceReview.md).
+        Vec3 gyroCal = ImuCalibrationOps::applyGyro(gyroBoat, cachedCal);
 
         // --- Feed the interactive calibration engines (Calibration/
         // Gyroscope web panels) - cheap, no-ops unless a swing/stationary
@@ -437,6 +529,7 @@ static void runIcm20948Task(GwApi *api)
         calControl.feedMagSample(magBoat.x, magBoat.y);
 
         // --- DMP sample (if enabled/available) ---
+        unsigned long dmpReadStartUs = micros();
         bool dmpFreshThisCycle = false;
         if (dmpOk)
         {
@@ -449,6 +542,7 @@ static void runIcm20948Task(GwApi *api)
                 dmpFreshThisCycle = true;
             }
         }
+        sensorReadUs += micros() - dmpReadStartUs;
         int dmpAgeMs = (int)(nowMs - lastDmpSampleMs);
 
         // --- Run the shared per-cycle pipeline (ImuCycleProcessor -
@@ -469,7 +563,7 @@ static void runIcm20948Task(GwApi *api)
         cycleIn.dtSec = dtSec;
         cycleIn.nowMs = nowMs;
         cycleIn.taskStartMs = taskStartMs;
-        cycleIn.cal = cal;
+        cycleIn.cal = cachedCal;
         cycleIn.deviationTable = cachedDeviationTable;
         cycleIn.deviationEnabled = deviationEnabled;
         cycleIn.headingMode = headingMode;
@@ -485,15 +579,19 @@ static void runIcm20948Task(GwApi *api)
         cycleIn.rotInvert = rotInvert;
         cycleIn.rotFiltAlpha = rotFiltAlpha;
 
+        unsigned long processingStartUs = micros();
         ImuCycleOutput cycleOut = cycleProcessor.process(cycleIn);
+        unsigned long processingUs = micros() - processingStartUs;
 
         webData.setRot(cycleOut.rotDegPerSec);
         if (sendRot)
         {
+            unsigned long t0 = micros();
             tN2kMsg rotMsg;
             SetN2kRateOfTurn(rotMsg, sid, radians(cycleOut.rotDegPerSec));
             api->sendN2kMessage(rotMsg);
             sid = (sid + 1) % 252;
+            nmeaSendUs += micros() - t0;
         }
 
         webData.setMagRaw(hw.readMagRaw(), magBoat, cycleOut.magCorrected);
@@ -507,10 +605,12 @@ static void runIcm20948Task(GwApi *api)
 
             if (sendAttitude)
             {
+                unsigned long t0 = micros();
                 tN2kMsg msg;
                 SetN2kAttitude(msg, sid, haveLastHeading ? lastHeadingRad : N2kDoubleNA, radians(cycleOut.pitchDeg), radians(cycleOut.rollDeg));
                 api->sendN2kMessage(msg);
                 sid = (sid + 1) % 252;
+                nmeaSendUs += micros() - t0;
             }
         }
 
@@ -535,10 +635,12 @@ static void runIcm20948Task(GwApi *api)
 
             if (sendHeading && headingMode != HeadingSourceMode::DiagnosticOnly)
             {
+                unsigned long t0 = micros();
                 tN2kMsg hdgMsg;
                 SetN2kMagneticHeading(hdgMsg, sid, radians(cycleOut.headingDeg));
                 api->sendN2kMessage(hdgMsg);
                 sid = (sid + 1) % 252;
+                nmeaSendUs += micros() - t0;
             }
 
             webData.setRotDiagnostic(cycleOut.rotDerivedDegPerSec, cycleOut.rotDisagrees);
@@ -556,6 +658,7 @@ static void runIcm20948Task(GwApi *api)
         // cheap, non-blocking queue push that no-ops entirely unless
         // capture or serial-CSV output is actually active, so this costs
         // nothing in the common case. ---
+        unsigned long loggingStartUs = micros();
         {
             DiagnosticSample sample;
             sample.timestampMs = nowMs;
@@ -587,6 +690,18 @@ static void runIcm20948Task(GwApi *api)
             sample.sensorErrorCount = 0; // no lower-level read-failure signal exposed by this hardware adapter/library yet
             capture.offerSample(sample);
         }
+        unsigned long loggingEnqueueUs = micros() - loggingStartUs;
+
+        // --- Performance instrumentation (Phase 7) - see
+        // doc/IcmPerformanceReview.md. Cheap: a handful of already-taken
+        // micros() deltas plus two FreeRTOS heap/stack queries, no
+        // allocation. ---
+        unsigned long totalLoopUs = micros() - loopStartUs;
+        bool missedDeadline = totalLoopUs > (loopDelayMs * 1000UL);
+        perfStats.update(sensorReadUs, processingUs, (uint32_t)cycleOut.fusionDurationUs, loggingEnqueueUs, nmeaSendUs,
+                          totalLoopUs, missedDeadline, hw.fifoFramesDrained(), hw.fifoErrorCount(),
+                          (uint32_t)xPortGetFreeHeapSize(), (uint32_t)xPortGetMinimumEverFreeHeapSize(),
+                          (uint32_t)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
     }
 }
 

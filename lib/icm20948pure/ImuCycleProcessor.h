@@ -99,6 +99,13 @@ struct ImuCycleOutput
     double rawCompassHeadingDeg = 0;
     double rawFusionHeadingDeg = 0;
     bool fusionCandidateValid = false;
+
+    // Time spent in just the fusion.update() call, for the Performance
+    // panel (see doc/IcmPerformanceReview.md) - measured with
+    // std::chrono rather than an injected clock callback, since chrono
+    // is portable pure C++ (no Arduino dependency) and the overhead of
+    // two now() calls is negligible next to what it measures.
+    double fusionDurationUs = 0;
 };
 
 class ImuCycleProcessor

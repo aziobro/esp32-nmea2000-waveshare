@@ -49,10 +49,16 @@ public:
     // decision itself.
     uint32_t fifoErrorCount() const { return fifoErrors; }
 
+    // Count of FIFO frames actually drained with a successfully-parsed
+    // Quat9 sample, since boot - the Performance panel's "FIFO frames
+    // drained" counter (see doc/IcmPerformanceReview.md).
+    uint32_t fifoFramesDrained() const { return framesDrained; }
+
 private:
     ICM_20948_I2C imu;
     double lastAccX = 0, lastAccY = 0, lastAccZ = 0;
     double lastGyrX = 0, lastGyrY = 0, lastGyrZ = 0;
     double lastMagX = 0, lastMagY = 0, lastMagZ = 0;
     uint32_t fifoErrors = 0;
+    uint32_t framesDrained = 0;
 };

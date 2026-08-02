@@ -2,6 +2,7 @@
 #include "ImuQuaternion.h"
 #include "ImuCompass.h"
 #include "ImuGyroCal.h" // ImuRateOfTurn::lowPass/derivedFromHeadingDegPerSec/disagreesWithHeadingDerivative
+#include <chrono>
 #include <math.h>
 
 namespace
@@ -85,7 +86,9 @@ ImuCycleOutput ImuCycleProcessor::process(const ImuCycleInput &in)
     // even while DMP is active. ---
     double rawCompassHeadingDeg = ImuAngleMath::wrap360(ImuCompass::rawHeadingDeg(magCal, toRad(rollDeg), toRad(pitchDeg)));
 
+    auto fusionStart = std::chrono::steady_clock::now();
     fusion.update(Vec3(toRad(gyroCal.x), toRad(gyroCal.y), toRad(gyroCal.z)), in.accelBoat, magCal, in.dtSec);
+    out.fusionDurationUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - fusionStart).count();
     double fr, fp, fy;
     ImuQuaternion::toEuler(fusion.quaternion(), fr, fp, fy);
     double rawFusionHeadingDeg = ImuAngleMath::wrap360(toDeg(fy));

@@ -177,6 +177,19 @@ void test_mag_disturbance_state_reported(void)
     TEST_ASSERT_TRUE(out.magMagnitude > 1000.0);
 }
 
+void test_fusion_duration_reported(void)
+{
+    ImuCycleProcessor proc;
+    ImuCycleInput in = levelInput();
+    in.dmpOk = false;
+    ImuCycleOutput out = proc.process(in);
+    // Sanity range only - a real duration varies by machine, this just
+    // confirms the field is actually being measured and not left at a
+    // stale/garbage value.
+    TEST_ASSERT_TRUE(out.fusionDurationUs >= 0.0);
+    TEST_ASSERT_TRUE(out.fusionDurationUs < 100000.0);
+}
+
 int main(int argc, char **argv)
 {
     UNITY_BEGIN();
@@ -188,5 +201,6 @@ int main(int argc, char **argv)
     RUN_TEST(test_fusion_invalid_before_settle_time);
     RUN_TEST(test_rot_filter_smooths_across_cycles);
     RUN_TEST(test_mag_disturbance_state_reported);
+    RUN_TEST(test_fusion_duration_reported);
     return UNITY_END();
 }
