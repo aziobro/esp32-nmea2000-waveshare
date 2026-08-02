@@ -17,7 +17,7 @@ static void icm20948CaptureWriterTaskEntry(GwApi *api)
         g_capture->writerTaskLoop(api);
 }
 
-void Icm20948Capture::begin(GwApi *api)
+void Icm20948Capture::startWriterTask(GwApi *api)
 {
     GwLog *logger = api->getLogger();
     g_capture = this;
@@ -28,7 +28,10 @@ void Icm20948Capture::begin(GwApi *api)
         return;
     }
     api->addUserTask(icm20948CaptureWriterTaskEntry, String("icm20948CapWr"), 4000);
+}
 
+void Icm20948Capture::begin(GwApi *api)
+{
     api->registerRequestHandler("capControl", [this](AsyncWebServerRequest *request)
                                  {
         String action = request->hasParam("action") ? request->getParam("action")->value() : "";

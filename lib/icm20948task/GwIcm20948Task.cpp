@@ -343,6 +343,26 @@ public:
     }
 };
 
+// Split across two call sites with OPPOSITE lifetime requirements, both
+// discovered the hard way on real hardware (neither is testable in the
+// native env - task scheduling isn't part of it):
+//   - initIcm20948() calls capture.startWriterTask(api): addUserTask()
+//     only succeeds with the framework's init-phase api instance
+//     (isInit=true) - calling it from within an already-running task's
+//     own body silently fails (logs an error, returns false, no task
+//     ever gets created).
+//   - runIcm20948Task() (below) calls capture.begin(api):
+//     registerRequestHandler() stores handlers on the CALLING api
+//     instance, which GwUserCode deletes the moment the function it was
+//     constructed for returns - fine from a task that runs forever
+//     (never returns), fatal from the one-shot initIcm20948 (handlers
+//     vanish immediately, requests 404).
+// Either half called from the wrong site is a silent failure, not a
+// compile error - hence this file-scope object (rather than a
+// runIcm20948Task-local one, like webData/perfStats) so both call sites
+// can reach the same instance.
+static Icm20948Capture capture;
+
 static void runIcm20948Task(GwApi *api)
 {
     GwLog *logger = api->getLogger();
@@ -366,7 +386,9 @@ static void runIcm20948Task(GwApi *api)
         serializeJson(doc, out);
         request->send(200, "application/json", out); });
 
-    Icm20948Capture capture;
+    // Registers capControl/capStatus/capDownload - must run from here
+    // (see capture's declaration comment above), NOT from initIcm20948
+    // (where the writer task itself was already started).
     capture.begin(api);
 
     GwIcm20948HardwareAdapter hw;
@@ -741,6 +763,12 @@ void initIcm20948(GwApi *api)
         return;
     }
     api->addCapability("icm20948", "true");
+    // Must run here (init phase, isInit=true) not from within
+    // runIcm20948Task - see Icm20948Capture::startWriterTask's doc
+    // comment. The complementary capture.begin(api) call (HTTP handler
+    // registration) is in runIcm20948Task instead, for the opposite
+    // reason - see its doc comment too.
+    capture.startWriterTask(api);
     // Stack is 16000 bytes - unchanged from the pre-rewrite code (the
     // intermittent cold-boot crash this project hit was an I2C/WiFi boot
     // race, not stack exhaustion - see GwIcm20948HardwareAdapter::begin()).

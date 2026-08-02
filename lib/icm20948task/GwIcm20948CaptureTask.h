@@ -25,9 +25,29 @@
 class Icm20948Capture
 {
 public:
-    // Creates the queue, spawns the writer task, and registers the HTTP
-    // control/download endpoints under the given api. Call once from
-    // initIcm20948.
+    // Creates the queue and spawns the writer task via api->addUserTask().
+    // MUST be called from initIcm20948() (the framework's init-phase api
+    // instance, isInit=true) - addUserTask() silently fails if called
+    // from an already-running task's own api instance (isInit=false
+    // there). Its effect (the task getting created) is stored in the
+    // framework's own long-lived task list, independent of the calling
+    // api instance's lifetime, so this is safe to call from a one-shot
+    // init function that returns immediately after - discovered the hard
+    // way on real hardware (the writer task was silently never created;
+    // native tests can't reach this, task scheduling isn't part of that
+    // environment at all).
+    void startWriterTask(GwApi *api);
+
+    // Registers the HTTP control/status/download endpoints under the
+    // given api. MUST be called from within runIcm20948Task() itself
+    // (a never-returning task loop), NOT from initIcm20948() - the
+    // opposite constraint from startWriterTask() above:
+    // registerRequestHandler() stores handlers on the CALLING api
+    // instance itself, and GwUserCode deletes that instance the moment
+    // the function it was constructed for returns - fine for a task that
+    // runs forever, fatal for a one-shot init function (also discovered
+    // the hard way: the endpoints 404'd after being moved into
+    // initIcm20948 alongside startWriterTask by mistake).
     void begin(GwApi *api);
 
     // Non-blocking; called every IMU loop cycle. Internally rate-limits
