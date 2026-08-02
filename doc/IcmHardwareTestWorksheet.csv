@@ -1,0 +1,13 @@
+test_number,boat_heading_reference,dmp_heading,compass_heading,fusion_heading,output_heading,roll_deg,pitch_deg,mag_magnitude,engine_state,alternator_state,autopilot_state,vhf_state,other_electrical_loads,quality,rejection_flags,notes
+1,,,,,,,,,,,,,,,,
+2,,,,,,,,,,,,,,,,
+3,,,,,,,,,,,,,,,,
+4,,,,,,,,,,,,,,,,
+5,,,,,,,,,,,,,,,,
+6,,,,,,,,,,,,,,,,
+7,,,,,,,,,,,,,,,,
+8,,,,,,,,,,,,,,,,
+9,,,,,,,,,,,,,,,,
+10,,,,,,,,,,,,,,,,
+11,,,,,,,,,,,,,,,,
+12,,,,,,,,,,,,,,,,
