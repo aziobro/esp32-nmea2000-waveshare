@@ -138,6 +138,12 @@ void Icm20948Capture::startCapture()
     captureStartMs = millis();
     lastOfferMs = 0;
     captureActive = true;
+    // Without this, capDownload's non-empty-buffer path returns pure
+    // data with no header at all (the header was only ever handled for
+    // the buffer-still-empty case) - found live, downloading an actual
+    // capture from the boat produced a CSV the calibration tool
+    // correctly refused to load as headerless.
+    appendToBuffer(ImuDiagnostics::csvHeader());
 }
 
 void Icm20948Capture::stopCapture()
