@@ -1,0 +1,7 @@
+{
+    "name": "icm20948pure",
+    "version": "0.1.0",
+    "description": "Arduino/ESP32-independent IMU heading math - coordinate transforms, calibration, compass, fusion, filtering. Desktop-testable; see lib/icm20948task/platformio.ini for the native test env that consumes this as a local dependency.",
+    "frameworks": "*",
+    "platforms": "*"
+}
