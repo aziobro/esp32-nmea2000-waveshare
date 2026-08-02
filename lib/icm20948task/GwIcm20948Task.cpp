@@ -16,6 +16,7 @@
 #include "ImuHeadingSource.h"
 #include "ImuMagMonitor.h"
 #include "ImuHeadingFilter.h"
+#include "ImuCycleProcessor.h"
 #include "ImuGyroCal.h"
 #include "ImuMagCal2D.h"
 #include "ImuDeviationTable.h"
@@ -250,10 +251,6 @@ public:
     }
 };
 
-// Unchanged from the pre-rewrite code.
-static double wrapDeg180(double deg) { return ImuAngleMath::wrap180(deg); }
-static double wrapDeg360(double deg) { return ImuAngleMath::wrap360(deg); }
-
 static void runIcm20948Task(GwApi *api)
 {
     GwLog *logger = api->getLogger();
@@ -309,18 +306,12 @@ static void runIcm20948Task(GwApi *api)
     Quaternion lastDmpQuat;
     unsigned long lastDmpSampleMs = 0;
 
-    MahonyFusion fusion(2.0, 0.0);
-    DmpValidator dmpValidator;
-    HeadingSourceSelector sourceSelector;
-    MagMonitor magMonitor;
-    HeadingFilter headingFilter;
-    // Diagnostic-only cross-check between the direct gyro-based ROT
-    // reading and the derivative of the (unwrapped) output heading -
-    // does not affect the transmitted PGN 127251 value, surfaced on the
-    // web tab only (ImuRateOfTurn::derivedFromHeadingDegPerSec/
-    // disagreesWithHeadingDerivative were previously implemented,
-    // tested, and never called - see doc/IcmImplementationAudit.md).
-    ImuAngleMath::UnwrappedAccumulator headingAccumulator;
+    // The actual heading/attitude pipeline (fusion filter, DMP validator,
+    // source selector, mag disturbance monitor, heading filter, ROT
+    // cross-check state) lives in ImuCycleProcessor now - the SAME class
+    // GwIcm20948ReplayTask uses, so replay runs provably the same code as
+    // this real hardware loop rather than a parallel reimplementation.
+    ImuCycleProcessor cycleProcessor;
     uint32_t diagSampleSeq = 0;
 
     // Carried forward between loop ticks so the Attitude PGN's Yaw field
@@ -445,47 +436,6 @@ static void runIcm20948Task(GwApi *api)
         calControl.feedGyroSample(gyroBoat, accelBoat.norm());
         calControl.feedMagSample(magBoat.x, magBoat.y);
 
-        // --- Rate of Turn. Low-pass filtered via ImuRateOfTurn (alpha
-        // defaults to 1.0 = no smoothing, so output is numerically
-        // unchanged unless icmRotFiltAlpha is deliberately lowered -
-        // this function was previously implemented, tested, and never
-        // called). ---
-        static double filteredRotDegPerSec = 0;
-        static bool haveFilteredRot = false;
-        double rawRotDegPerSec = gyroCal.z;
-        if (!haveFilteredRot)
-        {
-            filteredRotDegPerSec = rawRotDegPerSec;
-            haveFilteredRot = true;
-        }
-        else
-        {
-            filteredRotDegPerSec = ImuRateOfTurn::lowPass(filteredRotDegPerSec, rawRotDegPerSec, rotFiltAlpha);
-        }
-        double rotDegPerSec = filteredRotDegPerSec;
-        if (rotInvert)
-            rotDegPerSec = -rotDegPerSec;
-        webData.setRot(rotDegPerSec);
-        if (sendRot)
-        {
-            tN2kMsg rotMsg;
-            SetN2kRateOfTurn(rotMsg, sid, radians(rotDegPerSec));
-            api->sendN2kMessage(rotMsg);
-            sid = (sid + 1) % 252;
-        }
-
-        // --- Magnetometer calibration. `cal` (computed earlier alongside
-        // the gyro calibration above) carries the full bias+matrix from
-        // whichever the Calibration web panel last saved (2D boat swing
-        // or an imported offline-tool calibration), or falls back to the
-        // legacy hard-iron-only fields via migrateFromLegacy() if nothing
-        // has been saved yet. ---
-        Vec3 magCal = ImuCalibrationOps::applyMag(magBoat, cal);
-        double magMagnitude = magCal.norm();
-        MagMonitorConfig magCfg;
-        magMonitor.update(magCal, magCfg);
-        webData.setMagRaw(hw.readMagRaw(), magBoat, magCal);
-
         // --- DMP sample (if enabled/available) ---
         bool dmpFreshThisCycle = false;
         if (dmpOk)
@@ -499,46 +449,66 @@ static void runIcm20948Task(GwApi *api)
                 dmpFreshThisCycle = true;
             }
         }
+        int dmpAgeMs = (int)(nowMs - lastDmpSampleMs);
 
-        double dmpRollRad = 0, dmpPitchRad = 0, dmpYawRad = 0;
-        if (haveDmpSample)
-            ImuQuaternion::toEuler(lastDmpQuat, dmpRollRad, dmpPitchRad, dmpYawRad);
+        // --- Run the shared per-cycle pipeline (ImuCycleProcessor -
+        // see lib/icm20948pure/ImuCycleProcessor.h). This is the SAME
+        // code debug replay uses (GwIcm20948ReplayTask), not a parallel
+        // reimplementation - everything from gyro/mag calibration through
+        // heading-source selection and final heading correction lives
+        // there now. ---
+        ImuCycleInput cycleIn;
+        cycleIn.accelBoat = accelBoat;
+        cycleIn.gyroBoat = gyroBoat;
+        cycleIn.magBoat = magBoat;
+        cycleIn.dmpOk = dmpOk;
+        cycleIn.haveDmpSample = haveDmpSample;
+        cycleIn.dmpFreshThisCycle = dmpFreshThisCycle;
+        cycleIn.dmpQuat = lastDmpQuat;
+        cycleIn.dmpAgeMs = (unsigned long)dmpAgeMs;
+        cycleIn.dtSec = dtSec;
+        cycleIn.nowMs = nowMs;
+        cycleIn.taskStartMs = taskStartMs;
+        cycleIn.cal = cal;
+        cycleIn.deviationTable = cachedDeviationTable;
+        cycleIn.deviationEnabled = deviationEnabled;
+        cycleIn.headingMode = headingMode;
+        cycleIn.transitionMs = (uint32_t)transitionMs;
+        cycleIn.rollInvert = rollInvert;
+        cycleIn.pitchInvert = pitchInvert;
+        cycleIn.rollOffsetDeg = rollOffsetDeg;
+        cycleIn.pitchOffsetDeg = pitchOffsetDeg;
+        cycleIn.hdgInvert = hdgInvert;
+        cycleIn.hdgOffsetDeg = hdgOffsetDeg;
+        cycleIn.filterEnabled = filterEnabled;
+        cycleIn.filterTimeConstantSec = filterTimeConstant;
+        cycleIn.rotInvert = rotInvert;
+        cycleIn.rotFiltAlpha = rotFiltAlpha;
 
-        // --- Roll/Pitch source: DMP if active, else plain accelerometer
-        // tilt calc on the (boat-frame) accel vector - identical formula
-        // and identical result to the pre-rewrite code at the default
-        // orientation. ---
-        double rawRollRad, rawPitchRad;
-        bool haveAttitudeSample;
-        if (dmpOk)
+        ImuCycleOutput cycleOut = cycleProcessor.process(cycleIn);
+
+        webData.setRot(cycleOut.rotDegPerSec);
+        if (sendRot)
         {
-            rawRollRad = dmpRollRad;
-            rawPitchRad = dmpPitchRad;
-            haveAttitudeSample = haveDmpSample;
+            tN2kMsg rotMsg;
+            SetN2kRateOfTurn(rotMsg, sid, radians(cycleOut.rotDegPerSec));
+            api->sendN2kMessage(rotMsg);
+            sid = (sid + 1) % 252;
         }
-        else
-        {
-            rawRollRad = atan2(accelBoat.y, accelBoat.z);
-            rawPitchRad = atan2(-accelBoat.x, sqrt(accelBoat.y * accelBoat.y + accelBoat.z * accelBoat.z));
-            haveAttitudeSample = true;
-        }
 
-        double rollDeg = 0, pitchDeg = 0;
-        if (haveAttitudeSample)
-        {
-            double rawRollDeg = rollInvert ? -degrees(rawRollRad) : degrees(rawRollRad);
-            double rawPitchDeg = pitchInvert ? -degrees(rawPitchRad) : degrees(rawPitchRad);
-            rollDeg = wrapDeg180(rawRollDeg + rollOffsetDeg);
-            pitchDeg = wrapDeg180(rawPitchDeg + pitchOffsetDeg);
-            webData.set(rollDeg, pitchDeg, rawRollDeg, rawPitchDeg);
+        webData.setMagRaw(hw.readMagRaw(), magBoat, cycleOut.magCorrected);
 
-            api->setCalibrationValue(GwConfigDefinitions::icmRollOff, rawRollDeg);
-            api->setCalibrationValue(GwConfigDefinitions::icmPitchOff, rawPitchDeg);
+        if (cycleOut.attitudeValid)
+        {
+            webData.set(cycleOut.rollDeg, cycleOut.pitchDeg, cycleOut.rawRollDeg, cycleOut.rawPitchDeg);
+
+            api->setCalibrationValue(GwConfigDefinitions::icmRollOff, cycleOut.rawRollDeg);
+            api->setCalibrationValue(GwConfigDefinitions::icmPitchOff, cycleOut.rawPitchDeg);
 
             if (sendAttitude)
             {
                 tN2kMsg msg;
-                SetN2kAttitude(msg, sid, haveLastHeading ? lastHeadingRad : N2kDoubleNA, radians(pitchDeg), radians(rollDeg));
+                SetN2kAttitude(msg, sid, haveLastHeading ? lastHeadingRad : N2kDoubleNA, radians(cycleOut.pitchDeg), radians(cycleOut.rollDeg));
                 api->sendN2kMessage(msg);
                 sid = (sid + 1) % 252;
             }
@@ -556,93 +526,31 @@ static void runIcm20948Task(GwApi *api)
             api->setCalibrationValue(GwConfigDefinitions::icmMagYOff, (magYMin + magYMax) / 2.0);
         }
 
-        // --- Three candidate heading sources, all computed every cycle
-        // regardless of mode (Phase 6's core requirement: an independent
-        // software heading always runs, even while DMP is active). ---
-        double rawCompassHeadingDeg = ImuAngleMath::wrap360(ImuCompass::rawHeadingDeg(magCal, radians(rollDeg), radians(pitchDeg)));
-
-        fusion.update(Vec3(radians(gyroCal.x), radians(gyroCal.y), radians(gyroCal.z)), accelBoat, magCal, dtSec);
-        double fr, fp, fy;
-        ImuQuaternion::toEuler(fusion.quaternion(), fr, fp, fy);
-        double rawFusionHeadingDeg = ImuAngleMath::wrap360(degrees(fy));
-        bool fusionValid = (nowMs - taskStartMs) > 3000; // provisional settle time before trusting fusion's own convergence
-
-        double rawDmpHeadingDeg = haveDmpSample ? ImuAngleMath::wrap360(degrees(dmpYawRad)) : 0.0;
-
-        DmpValidationConfig dmpCfg;
-        int dmpAgeMs = (int)(nowMs - lastDmpSampleMs);
-        uint32_t rejFlags = dmpOk ? dmpValidator.validate(lastDmpQuat, dmpFreshThisCycle, dmpAgeMs,
-                                                            rawCompassHeadingDeg, true,
-                                                            (double)(nowMs - taskStartMs), dtSec, dmpCfg)
-                                   : HR_SENSOR_READ_ERROR;
-        if (magMonitor.state() == MagDisturbanceState::Disturbed)
-            rejFlags |= (HR_MAG_FIELD_CHANGE);
-
-        SourceCandidate dmpCandidate{dmpOk && haveDmpSample && rejFlags == HR_NONE, rawDmpHeadingDeg,
-                                      (rejFlags == HR_NONE) ? HeadingQuality::Good : HeadingQuality::Invalid};
-        SourceCandidate compassCandidate{true, rawCompassHeadingDeg,
-                                          (magMonitor.state() == MagDisturbanceState::Disturbed) ? HeadingQuality::Poor : HeadingQuality::Good};
-        SourceCandidate fusionCandidate{fusionValid, rawFusionHeadingDeg, HeadingQuality::Good};
-
-        HeadingSourceSelector::Result selResult = sourceSelector.update(headingMode, fusionCandidate, dmpCandidate, compassCandidate, nowMs, (uint32_t)transitionMs);
-
-        bool haveHeadingSample = selResult.valid;
-        double headingDeg = 0;
-        if (haveHeadingSample)
+        if (cycleOut.headingValid)
         {
-            double corrected = hdgInvert ? -selResult.headingDeg : selResult.headingDeg;
-            corrected = wrapDeg360(corrected + hdgOffsetDeg);
-            if (deviationEnabled)
-            {
-                // cachedDeviationTable comes from icmCalJson (see the
-                // calibration block above) - entries round-trip through
-                // the Calibration panel's export/import, not edited
-                // in-place here (see the user's explicit instruction not
-                // to build a deviation-table editor before hardware
-                // testing).
-                corrected = cachedDeviationTable.apply(corrected);
-            }
-            if (filterEnabled)
-            {
-                HeadingFilterConfig fCfg;
-                fCfg.timeConstantSec = filterTimeConstant;
-                headingDeg = headingFilter.update(corrected, dtSec, rotDegPerSec, fCfg);
-            }
-            else
-            {
-                headingDeg = corrected;
-            }
-
-            webData.setHeading(headingDeg);
-            lastHeadingRad = radians(headingDeg);
+            webData.setHeading(cycleOut.headingDeg);
+            lastHeadingRad = radians(cycleOut.headingDeg);
             haveLastHeading = true;
-            api->setCalibrationValue(GwConfigDefinitions::icmHdgOff, selResult.headingDeg);
+            api->setCalibrationValue(GwConfigDefinitions::icmHdgOff, cycleOut.preCorrectionHeadingDeg);
 
             if (sendHeading && headingMode != HeadingSourceMode::DiagnosticOnly)
             {
                 tN2kMsg hdgMsg;
-                SetN2kMagneticHeading(hdgMsg, sid, radians(headingDeg));
+                SetN2kMagneticHeading(hdgMsg, sid, radians(cycleOut.headingDeg));
                 api->sendN2kMessage(hdgMsg);
                 sid = (sid + 1) % 252;
             }
 
-            // Diagnostic-only ROT cross-check (see the comment on
-            // headingAccumulator's declaration) - never affects PGN
-            // 127251's transmitted value.
-            double prevUnwrapped = headingAccumulator.isInitialized() ? headingAccumulator.value() : headingDeg;
-            double newUnwrapped = headingAccumulator.update(headingDeg);
-            double derivedRotDegPerSec = ImuRateOfTurn::derivedFromHeadingDegPerSec(newUnwrapped, prevUnwrapped, dtSec);
-            bool rotDisagrees = ImuRateOfTurn::disagreesWithHeadingDerivative(rotDegPerSec, derivedRotDegPerSec, 30.0);
-            webData.setRotDiagnostic(derivedRotDegPerSec, rotDisagrees);
+            webData.setRotDiagnostic(cycleOut.rotDerivedDegPerSec, cycleOut.rotDisagrees);
         }
         else
         {
             webData.setHeadingInvalid();
         }
 
-        webData.setDiagnostics(selResult.source, selResult.quality, rejFlags, magMagnitude,
-                                rawDmpHeadingDeg, dmpCandidate.valid, rawCompassHeadingDeg, rawFusionHeadingDeg, fusionValid,
-                                magMonitor.state());
+        webData.setDiagnostics(cycleOut.headingSource, cycleOut.headingQuality, cycleOut.rejectionFlags, cycleOut.magMagnitude,
+                                cycleOut.rawDmpHeadingDeg, cycleOut.dmpCandidateValid, cycleOut.rawCompassHeadingDeg, cycleOut.rawFusionHeadingDeg,
+                                cycleOut.fusionCandidateValid, cycleOut.magDisturbanceState);
 
         // --- Diagnostic CSV capture (Phase 2) - offerSample() is a
         // cheap, non-blocking queue push that no-ops entirely unless
@@ -658,22 +566,22 @@ static void runIcm20948Task(GwApi *api)
             sample.accelBoat = accelBoat;
             sample.gyroBoat = gyroBoat;
             sample.magBoat = magBoat;
-            sample.magCorrected = magCal;
-            sample.magMagnitude = magMagnitude;
+            sample.magCorrected = cycleOut.magCorrected;
+            sample.magMagnitude = cycleOut.magMagnitude;
             sample.dmpQ0 = lastDmpQuat.w;
             sample.dmpQ1 = lastDmpQuat.x;
             sample.dmpQ2 = lastDmpQuat.y;
             sample.dmpQ3 = lastDmpQuat.z;
-            sample.dmpRollDeg = degrees(dmpRollRad);
-            sample.dmpPitchDeg = degrees(dmpPitchRad);
-            sample.dmpHeadingDeg = rawDmpHeadingDeg;
-            sample.compassHeadingDeg = rawCompassHeadingDeg;
-            sample.fusionHeadingDeg = rawFusionHeadingDeg;
-            sample.outputHeadingDeg = haveHeadingSample ? headingDeg : -1.0;
-            sample.rateOfTurnDegPerSec = rotDegPerSec;
-            sample.activeSource = selResult.source;
-            sample.headingQuality = selResult.quality;
-            sample.rejectionFlags = rejFlags;
+            sample.dmpRollDeg = cycleOut.dmpRollDeg;
+            sample.dmpPitchDeg = cycleOut.dmpPitchDeg;
+            sample.dmpHeadingDeg = cycleOut.rawDmpHeadingDeg;
+            sample.compassHeadingDeg = cycleOut.rawCompassHeadingDeg;
+            sample.fusionHeadingDeg = cycleOut.rawFusionHeadingDeg;
+            sample.outputHeadingDeg = cycleOut.headingValid ? cycleOut.headingDeg : -1.0;
+            sample.rateOfTurnDegPerSec = cycleOut.rotDegPerSec;
+            sample.activeSource = cycleOut.headingSource;
+            sample.headingQuality = cycleOut.headingQuality;
+            sample.rejectionFlags = cycleOut.rejectionFlags;
             sample.dmpSampleAgeMs = dmpAgeMs;
             sample.fifoErrorCount = hw.fifoErrorCount();
             sample.sensorErrorCount = 0; // no lower-level read-failure signal exposed by this hardware adapter/library yet
