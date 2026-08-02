@@ -17,9 +17,12 @@
 #include "ImuMagMonitor.h"
 #include "ImuHeadingFilter.h"
 #include "ImuGyroCal.h"
+#include "ImuMagCal2D.h"
 #include "ImuDeviationTable.h"
+#include "ImuCalibrationJson.h"
 #include "ImuDiagnostics.h"
 #include "GwIcm20948CaptureTask.h"
+#include "GwIcm20948CalControlTask.h"
 
 /*
   Orchestration layer: reads config, drives the hardware adapter, and runs
@@ -253,6 +256,9 @@ static void runIcm20948Task(GwApi *api)
     LOG_DEBUG(GwLog::LOG, "ICM20948 found, starting attitude updates");
     GwConfigHandler *config = api->getConfig();
 
+    Icm20948CalControl calControl;
+    calControl.begin(api, config);
+
     int accRangeIdx = 0, gyrRangeIdx = 0;
     config->getValue(accRangeIdx, GwConfigDefinitions::icmAccRange, 0);
     config->getValue(gyrRangeIdx, GwConfigDefinitions::icmGyrRange, 0);
@@ -370,12 +376,49 @@ static void runIcm20948Task(GwApi *api)
         // --- Calibration (moved ahead of Rate of Turn so gyro bias
         // correction applies before the gyro vector is used anywhere -
         // ImuCalibrationOps::applyGyro was previously never called, see
-        // doc/IcmImplementationAudit.md. gyroBias is always 0 today
-        // (nothing persists a learned value yet - GyroCalEngine isn't
-        // wired to the task), so this is a no-op right now, but the code
-        // path is exercised and ready for when it isn't. ---
-        ImuCalibration cal = ImuCalibrationOps::migrateFromLegacy(magXOffset, magYOffset, hdgOffsetDeg);
+        // doc/IcmImplementationAudit.md). Prefers the advanced calibration
+        // saved via the web UI's Calibration/Gyroscope panels (persisted
+        // as icmCalJson - see GwIcm20948CalControlTask.h) over the legacy
+        // hard-iron-only fields, falling back to migrateFromLegacy() when
+        // no advanced calibration has been saved yet. The expensive JSON
+        // parse only re-runs when the stored string actually changes, not
+        // every cycle - see the cached statics below. ---
+        static String lastCalJsonStr = "\x01"; // sentinel - never a real config value, forces the first-cycle parse
+        static ImuCalibration cachedCal;
+        static DeviationTable cachedDeviationTable;
+        static bool cachedDeviationTableEnabled = false;
+        {
+            String calJsonStr;
+            config->getValue(calJsonStr, GwConfigDefinitions::icmCalJson, "");
+            if (calJsonStr != lastCalJsonStr)
+            {
+                lastCalJsonStr = calJsonStr;
+                bool parsed = false;
+                if (calJsonStr.length() > 0)
+                {
+                    MountOrientation ignoredOrientation; // icmOrientation config remains authoritative
+                    std::string err;
+                    parsed = ImuCalibrationJson::importJson(std::string(calJsonStr.c_str()), cachedCal, ignoredOrientation,
+                                                             cachedDeviationTable, cachedDeviationTableEnabled, err);
+                }
+                if (!parsed)
+                {
+                    cachedCal = ImuCalibrationOps::migrateFromLegacy(magXOffset, magYOffset, hdgOffsetDeg);
+                    cachedDeviationTable = DeviationTable();
+                }
+            }
+        }
+        ImuCalibration cal = cachedCal;
         Vec3 gyroCal = ImuCalibrationOps::applyGyro(gyroBoat, cal);
+
+        // --- Feed the interactive calibration engines (Calibration/
+        // Gyroscope web panels) - cheap, no-ops unless a swing/stationary
+        // capture is actively running. Uses the RAW (pre-calibration)
+        // gyro/mag boat-frame vectors, since these engines measure
+        // absolute bias/scale, not a residual on top of whatever's
+        // already applied - see GwIcm20948CalControlTask.h. ---
+        calControl.feedGyroSample(gyroBoat, accelBoat.norm());
+        calControl.feedMagSample(magBoat.x, magBoat.y);
 
         // --- Rate of Turn. Low-pass filtered via ImuRateOfTurn (alpha
         // defaults to 1.0 = no smoothing, so output is numerically
@@ -406,13 +449,12 @@ static void runIcm20948Task(GwApi *api)
             sid = (sid + 1) % 252;
         }
 
-        // --- Magnetometer calibration (hard-iron, from the legacy
-        // config fields - see ImuCalibrationOps::migrateFromLegacy,
-        // `cal` computed earlier alongside the gyro calibration above).
-        // Full soft-iron matrix support exists in the calibration model
-        // but isn't yet fed from a stored config value here - the 2D/3D
-        // calibration engines that would populate it are a follow-up,
-        // see the project's own memory/doc notes on remaining work. ---
+        // --- Magnetometer calibration. `cal` (computed earlier alongside
+        // the gyro calibration above) carries the full bias+matrix from
+        // whichever the Calibration web panel last saved (2D boat swing
+        // or an imported offline-tool calibration), or falls back to the
+        // legacy hard-iron-only fields via migrateFromLegacy() if nothing
+        // has been saved yet. ---
         Vec3 magCal = ImuCalibrationOps::applyMag(magBoat, cal);
         double magMagnitude = magCal.norm();
         MagMonitorConfig magCfg;
@@ -526,8 +568,13 @@ static void runIcm20948Task(GwApi *api)
             corrected = wrapDeg360(corrected + hdgOffsetDeg);
             if (deviationEnabled)
             {
-                static DeviationTable deviationTable; // populated via the web editor - Commit 14/deviation-table web UI
-                corrected = deviationTable.apply(corrected);
+                // cachedDeviationTable comes from icmCalJson (see the
+                // calibration block above) - entries round-trip through
+                // the Calibration panel's export/import, not edited
+                // in-place here (see the user's explicit instruction not
+                // to build a deviation-table editor before hardware
+                // testing).
+                corrected = cachedDeviationTable.apply(corrected);
             }
             if (filterEnabled)
             {

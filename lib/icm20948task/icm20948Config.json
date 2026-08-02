@@ -312,5 +312,16 @@
         "capabilities": {
             "icm20948": "true"
         }
+    },
+    {
+        "name": "icmCalJson",
+        "label": "Advanced calibration (internal)",
+        "type": "text",
+        "default": "",
+        "description": "full magnetometer/gyroscope calibration (bias, soft-iron matrix, deviation table) managed by the IMU tab's Calibration panel - export/import/reset there rather than editing this field directly. Empty means no advanced calibration has been saved yet, and the simple hard-iron offsets above are used instead (see ImuCalibrationOps::migrateFromLegacy).",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
     }
 ]
