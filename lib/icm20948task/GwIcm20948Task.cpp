@@ -113,6 +113,8 @@ class Icm20948WebData
     double accXg = 0, accYg = 0, accZg = 0; // raw accelerometer, g
     bool dmpActive = false;
     double rotDegPerSec = 0;
+    double rotDerivedDegPerSec = 0;
+    bool rotDisagrees = false;
 
     // New diagnostics
     String headingSource = "none";
@@ -166,6 +168,12 @@ public:
         GWSYNCHRONIZED(lock);
         rotDegPerSec = degPerSec;
     }
+    void setRotDiagnostic(double derivedDegPerSec, bool disagrees)
+    {
+        GWSYNCHRONIZED(lock);
+        rotDerivedDegPerSec = derivedDegPerSec;
+        rotDisagrees = disagrees;
+    }
     void setDiagnostics(HeadingSource src, HeadingQuality q, uint32_t rejFlags, double magMag,
                          double dmpHdg, bool dmpValid, double compassHdg, double fusionHdg, bool fusOk,
                          MagDisturbanceState mState)
@@ -197,6 +205,8 @@ public:
         doc["accZ"] = accZg;
         doc["dmpActive"] = dmpActive;
         doc["rot"] = rotDegPerSec;
+        doc["rotDerived"] = rotDerivedDegPerSec;
+        doc["rotDisagrees"] = rotDisagrees;
         doc["headingSource"] = headingSource;
         doc["headingQuality"] = headingQuality;
         doc["rejectionFlags"] = rejectionFlags;
@@ -268,6 +278,13 @@ static void runIcm20948Task(GwApi *api)
     HeadingSourceSelector sourceSelector;
     MagMonitor magMonitor;
     HeadingFilter headingFilter;
+    // Diagnostic-only cross-check between the direct gyro-based ROT
+    // reading and the derivative of the (unwrapped) output heading -
+    // does not affect the transmitted PGN 127251 value, surfaced on the
+    // web tab only (ImuRateOfTurn::derivedFromHeadingDegPerSec/
+    // disagreesWithHeadingDerivative were previously implemented,
+    // tested, and never called - see doc/IcmImplementationAudit.md).
+    ImuAngleMath::UnwrappedAccumulator headingAccumulator;
 
     // Carried forward between loop ticks so the Attitude PGN's Yaw field
     // is never left N/A when a heading is available - some chartplotters
@@ -332,6 +349,8 @@ static void runIcm20948Task(GwApi *api)
         bool sendRot = true, rotInvert = false;
         config->getValue(sendRot, GwConfigDefinitions::icmSendRot, true);
         config->getValue(rotInvert, GwConfigDefinitions::icmRotInv, false);
+        float rotFiltAlpha = 1.0f;
+        config->getValue(rotFiltAlpha, GwConfigDefinitions::icmRotFiltAlpha, 1.0f);
 
         // --- Raw samples, transformed into boat frame. At the default
         // MountOrientation::Forward this transform is the identity, so
@@ -342,8 +361,34 @@ static void runIcm20948Task(GwApi *api)
         Vec3 magBoat = ImuCoordinateTransform::toBoatFrame(hw.readMagRaw(), orientation);
         webData.setAccel(accelBoat.x, accelBoat.y, accelBoat.z);
 
-        // --- Rate of Turn - direct gyro reading, independent of DMP/attitude validity. ---
-        double rotDegPerSec = gyroBoat.z;
+        // --- Calibration (moved ahead of Rate of Turn so gyro bias
+        // correction applies before the gyro vector is used anywhere -
+        // ImuCalibrationOps::applyGyro was previously never called, see
+        // doc/IcmImplementationAudit.md. gyroBias is always 0 today
+        // (nothing persists a learned value yet - GyroCalEngine isn't
+        // wired to the task), so this is a no-op right now, but the code
+        // path is exercised and ready for when it isn't. ---
+        ImuCalibration cal = ImuCalibrationOps::migrateFromLegacy(magXOffset, magYOffset, hdgOffsetDeg);
+        Vec3 gyroCal = ImuCalibrationOps::applyGyro(gyroBoat, cal);
+
+        // --- Rate of Turn. Low-pass filtered via ImuRateOfTurn (alpha
+        // defaults to 1.0 = no smoothing, so output is numerically
+        // unchanged unless icmRotFiltAlpha is deliberately lowered -
+        // this function was previously implemented, tested, and never
+        // called). ---
+        static double filteredRotDegPerSec = 0;
+        static bool haveFilteredRot = false;
+        double rawRotDegPerSec = gyroCal.z;
+        if (!haveFilteredRot)
+        {
+            filteredRotDegPerSec = rawRotDegPerSec;
+            haveFilteredRot = true;
+        }
+        else
+        {
+            filteredRotDegPerSec = ImuRateOfTurn::lowPass(filteredRotDegPerSec, rawRotDegPerSec, rotFiltAlpha);
+        }
+        double rotDegPerSec = filteredRotDegPerSec;
         if (rotInvert)
             rotDegPerSec = -rotDegPerSec;
         webData.setRot(rotDegPerSec);
@@ -356,12 +401,12 @@ static void runIcm20948Task(GwApi *api)
         }
 
         // --- Magnetometer calibration (hard-iron, from the legacy
-        // config fields - see ImuCalibrationOps::migrateFromLegacy).
+        // config fields - see ImuCalibrationOps::migrateFromLegacy,
+        // `cal` computed earlier alongside the gyro calibration above).
         // Full soft-iron matrix support exists in the calibration model
         // but isn't yet fed from a stored config value here - the 2D/3D
         // calibration engines that would populate it are a follow-up,
         // see the project's own memory/doc notes on remaining work. ---
-        ImuCalibration cal = ImuCalibrationOps::migrateFromLegacy(magXOffset, magYOffset, hdgOffsetDeg);
         Vec3 magCal = ImuCalibrationOps::applyMag(magBoat, cal);
         double magMagnitude = magCal.norm();
         MagMonitorConfig magCfg;
@@ -442,7 +487,7 @@ static void runIcm20948Task(GwApi *api)
         // software heading always runs, even while DMP is active). ---
         double rawCompassHeadingDeg = ImuAngleMath::wrap360(ImuCompass::rawHeadingDeg(magCal, radians(rollDeg), radians(pitchDeg)));
 
-        fusion.update(Vec3(radians(gyroBoat.x), radians(gyroBoat.y), radians(gyroBoat.z)), accelBoat, magCal, dtSec);
+        fusion.update(Vec3(radians(gyroCal.x), radians(gyroCal.y), radians(gyroCal.z)), accelBoat, magCal, dtSec);
         double fr, fp, fy;
         ImuQuaternion::toEuler(fusion.quaternion(), fr, fp, fy);
         double rawFusionHeadingDeg = ImuAngleMath::wrap360(degrees(fy));
@@ -501,6 +546,15 @@ static void runIcm20948Task(GwApi *api)
                 api->sendN2kMessage(hdgMsg);
                 sid = (sid + 1) % 252;
             }
+
+            // Diagnostic-only ROT cross-check (see the comment on
+            // headingAccumulator's declaration) - never affects PGN
+            // 127251's transmitted value.
+            double prevUnwrapped = headingAccumulator.isInitialized() ? headingAccumulator.value() : headingDeg;
+            double newUnwrapped = headingAccumulator.update(headingDeg);
+            double derivedRotDegPerSec = ImuRateOfTurn::derivedFromHeadingDegPerSec(newUnwrapped, prevUnwrapped, dtSec);
+            bool rotDisagrees = ImuRateOfTurn::disagreesWithHeadingDerivative(rotDegPerSec, derivedRotDegPerSec, 30.0);
+            webData.setRotDiagnostic(derivedRotDegPerSec, rotDisagrees);
         }
         else
         {

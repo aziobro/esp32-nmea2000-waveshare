@@ -136,6 +136,20 @@
         }
     },
     {
+        "name": "icmRotFiltAlpha",
+        "label": "Rate of turn smoothing (1=none)",
+        "type": "number",
+        "default": "1.0",
+        "min": 0.01,
+        "max": 1.0,
+        "check": "checkMinMax",
+        "description": "low-pass filter factor for Rate of Turn - 1.0 (default) applies no smoothing at all, exactly matching the original unfiltered gyro-Z reading. Lower values smooth more (0.1 is fairly heavy smoothing) at the cost of slower response to an actual turn. Provisional - real sensor noise characteristics aren't known without hardware.",
+        "category": "icm20948",
+        "capabilities": {
+            "icm20948": "true"
+        }
+    },
+    {
         "name": "icmRotInv",
         "label": "Invert rate of turn",
         "type": "boolean",
