@@ -18,6 +18,8 @@
 #include "ImuHeadingFilter.h"
 #include "ImuGyroCal.h"
 #include "ImuDeviationTable.h"
+#include "ImuDiagnostics.h"
+#include "GwIcm20948CaptureTask.h"
 
 /*
   Orchestration layer: reads config, drives the hardware adapter, and runs
@@ -238,6 +240,9 @@ static void runIcm20948Task(GwApi *api)
         serializeJson(doc, out);
         request->send(200, "application/json", out); });
 
+    Icm20948Capture capture;
+    capture.begin(api);
+
     GwIcm20948HardwareAdapter hw;
     if (!hw.begin(logger, GWICM20948_SDA_PIN, GWICM20948_SCL_PIN))
     {
@@ -285,6 +290,7 @@ static void runIcm20948Task(GwApi *api)
     // disagreesWithHeadingDerivative were previously implemented,
     // tested, and never called - see doc/IcmImplementationAudit.md).
     ImuAngleMath::UnwrappedAccumulator headingAccumulator;
+    uint32_t diagSampleSeq = 0;
 
     // Carried forward between loop ticks so the Attitude PGN's Yaw field
     // is never left N/A when a heading is available - some chartplotters
@@ -564,6 +570,42 @@ static void runIcm20948Task(GwApi *api)
         webData.setDiagnostics(selResult.source, selResult.quality, rejFlags, magMagnitude,
                                 rawDmpHeadingDeg, dmpCandidate.valid, rawCompassHeadingDeg, rawFusionHeadingDeg, fusionValid,
                                 magMonitor.state());
+
+        // --- Diagnostic CSV capture (Phase 2) - offerSample() is a
+        // cheap, non-blocking queue push that no-ops entirely unless
+        // capture or serial-CSV output is actually active, so this costs
+        // nothing in the common case. ---
+        {
+            DiagnosticSample sample;
+            sample.timestampMs = nowMs;
+            sample.sampleSequence = diagSampleSeq++;
+            sample.accelRaw = hw.readAccelG();
+            sample.gyroRaw = hw.readGyroDegPerSec();
+            sample.magRaw = hw.readMagRaw();
+            sample.accelBoat = accelBoat;
+            sample.gyroBoat = gyroBoat;
+            sample.magBoat = magBoat;
+            sample.magCorrected = magCal;
+            sample.magMagnitude = magMagnitude;
+            sample.dmpQ0 = lastDmpQuat.w;
+            sample.dmpQ1 = lastDmpQuat.x;
+            sample.dmpQ2 = lastDmpQuat.y;
+            sample.dmpQ3 = lastDmpQuat.z;
+            sample.dmpRollDeg = degrees(dmpRollRad);
+            sample.dmpPitchDeg = degrees(dmpPitchRad);
+            sample.dmpHeadingDeg = rawDmpHeadingDeg;
+            sample.compassHeadingDeg = rawCompassHeadingDeg;
+            sample.fusionHeadingDeg = rawFusionHeadingDeg;
+            sample.outputHeadingDeg = haveHeadingSample ? headingDeg : -1.0;
+            sample.rateOfTurnDegPerSec = rotDegPerSec;
+            sample.activeSource = selResult.source;
+            sample.headingQuality = selResult.quality;
+            sample.rejectionFlags = rejFlags;
+            sample.dmpSampleAgeMs = dmpAgeMs;
+            sample.fifoErrorCount = hw.fifoErrorCount();
+            sample.sensorErrorCount = 0; // no lower-level read-failure signal exposed by this hardware adapter/library yet
+            capture.offerSample(sample);
+        }
     }
 }
 

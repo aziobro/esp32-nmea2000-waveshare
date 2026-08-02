@@ -122,6 +122,8 @@ bool GwIcm20948HardwareAdapter::readDmpQuaternion(Quaternion &out)
     do
     {
         dmpStat = imu.readDMPdataFromFIFO(&data);
+        if (dmpStat != ICM_20948_Stat_Ok && dmpStat != ICM_20948_Stat_FIFOMoreDataAvail && dmpStat != ICM_20948_Stat_FIFONoDataAvail)
+            fifoErrors++;
         if ((dmpStat == ICM_20948_Stat_Ok || dmpStat == ICM_20948_Stat_FIFOMoreDataAvail) &&
             (data.header & DMP_header_bitmap_Quat9) > 0)
         {

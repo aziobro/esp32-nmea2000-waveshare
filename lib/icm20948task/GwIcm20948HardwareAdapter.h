@@ -43,9 +43,16 @@ public:
     // matters). Returns true if at least one new Quat9 sample was found.
     bool readDmpQuaternion(Quaternion &out);
 
+    // Count of readDMPdataFromFIFO() calls that returned an error status
+    // other than Ok/FIFOMoreDataAvail, since boot - exposed for
+    // diagnostics (CSV capture, web tab), not used for any pipeline
+    // decision itself.
+    uint32_t fifoErrorCount() const { return fifoErrors; }
+
 private:
     ICM_20948_I2C imu;
     double lastAccX = 0, lastAccY = 0, lastAccZ = 0;
     double lastGyrX = 0, lastGyrY = 0, lastGyrZ = 0;
     double lastMagX = 0, lastMagY = 0, lastMagZ = 0;
+    uint32_t fifoErrors = 0;
 };
