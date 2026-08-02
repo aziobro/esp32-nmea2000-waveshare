@@ -173,6 +173,39 @@ void test_gyro_calibration_optional(void)
     TEST_ASSERT_FALSE(outCal.gyroCalibrationValid);
 }
 
+void test_imports_json_produced_by_the_python_calibration_tool(void)
+{
+    // Captured verbatim from tools/icm20948_calibration/calibrate.py's
+    // output fitting a synthetic rotated-ellipsoid capture (see
+    // tools/icm20948_calibration/tests/test_ellipsoid_fit.py's
+    // rotated_ellipsoid scenario) - a real cross-language check that the
+    // Python tool's JSON is actually importable by this exact firmware
+    // code, not just schema-compatible on paper.
+    std::string json =
+        "{\"schemaVersion\": 1, \"orientation\": 0, \"magCalibration\": {\"valid\": true, "
+        "\"quality\": 0.9999999999999963, \"referenceMagnitude\": 46.850944434574245, "
+        "\"bias\": [-10.000000000000007, 5.999999999999999, -4.000000000000013], "
+        "\"matrix\": [[0.9574537023212278, 0.15675629044733275, 0.12088861730958242], "
+        "[0.1567562904473327, 1.0979450508447002, -0.005907379533204061], "
+        "[0.12088861730958245, -0.005907379533204138, 0.9899126350813997]]}, "
+        "\"gyroCalibration\": {\"valid\": false, \"bias\": [0.0, 0.0, 0.0], \"standardDeviation\": [0.0, 0.0, 0.0]}, "
+        "\"heading\": {\"fixedOffsetDeg\": 0.0}, "
+        "\"deviationTable\": {\"enabled\": false, \"entries\": []}}";
+
+    ImuCalibration outCal;
+    MountOrientation outOrientation;
+    DeviationTable outDev;
+    bool outDevEnabled;
+    std::string err;
+    bool ok = ImuCalibrationJson::importJson(json, outCal, outOrientation, outDev, outDevEnabled, err);
+    TEST_ASSERT_TRUE_MESSAGE(ok, err.c_str());
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, -10.0, outCal.magBias[0]);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, 6.0, outCal.magBias[1]);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, -4.0, outCal.magBias[2]);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-6, 0.9574537023212278, outCal.magMatrix[0][0]);
+    TEST_ASSERT_TRUE(outCal.magCalibrationValid);
+}
+
 void test_rejects_too_many_deviation_entries(void)
 {
     std::string json = "{\"schemaVersion\":1,\"orientation\":0,"
@@ -203,6 +236,7 @@ int main(int argc, char **argv)
     RUN_TEST(test_rejects_implausible_matrix);
     RUN_TEST(test_rejects_missing_mag_calibration);
     RUN_TEST(test_gyro_calibration_optional);
+    RUN_TEST(test_imports_json_produced_by_the_python_calibration_tool);
     RUN_TEST(test_rejects_too_many_deviation_entries);
     return UNITY_END();
 }
