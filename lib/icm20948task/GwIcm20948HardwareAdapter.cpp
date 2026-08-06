@@ -69,7 +69,17 @@ bool GwIcm20948HardwareAdapter::initDmp(GwLog *logger)
     bool ok = true;
     ok &= (imu.initializeDMP() == ICM_20948_Stat_Ok);
     ok &= (imu.enableDMPSensor(INV_ICM20948_SENSOR_ORIENTATION) == ICM_20948_Stat_Ok);
+    // 32-bit calibrated compass (Compass_Calibr FIFO field) - the DMP's own
+    // magnetometer path, reconfigures I2C_SLV0 for its own reverse-engineered
+    // shadow-register layout as a side effect of initializeDMP() above. That
+    // reconfiguration is exactly why the plain getAGMT()/readMagRaw() path
+    // (which assumes the non-DMP layout) silently decodes garbage once DMP
+    // is active - see doc/IcmMagnetometerDmpConflict.md. Reading the
+    // magnetometer via this DMP-native field instead sidesteps the conflict
+    // entirely rather than trying to keep two I2C_SLV0 consumers in sync.
+    ok &= (imu.enableDMPSensor(INV_ICM20948_SENSOR_GEOMAGNETIC_FIELD) == ICM_20948_Stat_Ok);
     ok &= (imu.setDMPODRrate(DMP_ODR_Reg_Quat9, 0) == ICM_20948_Stat_Ok); // 0 = maximum rate
+    ok &= (imu.setDMPODRrate(DMP_ODR_Reg_Cpass_Calibr, 0) == ICM_20948_Stat_Ok); // 0 = maximum rate
     ok &= (imu.enableFIFO() == ICM_20948_Stat_Ok);
     ok &= (imu.enableDMP() == ICM_20948_Stat_Ok);
     ok &= (imu.resetDMP() == ICM_20948_Stat_Ok);
@@ -117,6 +127,7 @@ Vec3 GwIcm20948HardwareAdapter::readMagRaw() const
 bool GwIcm20948HardwareAdapter::readDmpQuaternion(Quaternion &out)
 {
     bool haveSample = false;
+    haveDmpCompassSample = false;
     icm_20948_DMP_data_t data;
     ICM_20948_Status_e dmpStat;
     do
@@ -140,6 +151,26 @@ bool GwIcm20948HardwareAdapter::readDmpQuaternion(Quaternion &out)
             out.z = q3;
             haveSample = true;
         }
+        // Same frame this cycle's Quat9 came from (or an earlier one drained
+        // in this same do-while pass) can also carry the calibrated compass
+        // field - captured here rather than via a second FIFO read, see
+        // readDmpCompass()'s doc comment for why a second drain is wrong.
+        if ((dmpStat == ICM_20948_Stat_Ok || dmpStat == ICM_20948_Stat_FIFOMoreDataAvail) &&
+            (data.header & DMP_header_bitmap_Compass_Calibr) > 0)
+        {
+            lastDmpCompassRaw.x = ((double)data.Compass_Calibr.Data.X) / 65536.0; // 2^16, uT
+            lastDmpCompassRaw.y = ((double)data.Compass_Calibr.Data.Y) / 65536.0;
+            lastDmpCompassRaw.z = ((double)data.Compass_Calibr.Data.Z) / 65536.0;
+            haveDmpCompassSample = true;
+        }
     } while (dmpStat == ICM_20948_Stat_FIFOMoreDataAvail);
     return haveSample;
+}
+
+bool GwIcm20948HardwareAdapter::readDmpCompass(Vec3 &out)
+{
+    if (!haveDmpCompassSample)
+        return false;
+    out = lastDmpCompassRaw;
+    return true;
 }

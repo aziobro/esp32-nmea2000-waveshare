@@ -4,6 +4,7 @@
 #include "GwJsonDocument.h"
 #include "GwSynchronized.h"
 #include <N2kMessages.h>
+#include <atomic>
 
 #include "GwIcm20948HardwareAdapter.h"
 #include "ImuTypes.h"
@@ -363,10 +364,83 @@ public:
 // can reach the same instance.
 static Icm20948Capture capture;
 
+// Self-contained software watchdog for runIcm20948Task(). Real, bench-
+// confirmed bug (not hypothetical): a Qwiic cable flexed during handheld
+// tumbling can leave the I2C bus in a bad mid-transaction state that the
+// ESP32 Arduino Wire driver never times out of, despite
+// GwIcm20948HardwareAdapter::begin()'s own Wire.setTimeOut(1000) - watched
+// this hang the main task for 20-40+ seconds with ZERO log output (not a
+// crash, not a logged I2C error - a genuine silent infinite block deep in
+// the driver stack). Since the stuck task can't rescue itself, a second
+// tiny task watches a heartbeat timestamp and force-restarts the device if
+// it goes stale - converts a hang requiring physical/manual power-cycling
+// into a ~10s self-recovering reboot. Must be started via addUserTask()
+// from initIcm20948() (init-phase api), not from within runIcm20948Task -
+// same constraint as capture.startWriterTask(), see its doc comment above.
+// std::atomic (not plain volatile) - real bug found live 2026-08-06: core-
+// pinning the watchdog to a dedicated core (confirmed working via direct
+// core-ID logging) still didn't let it recover a real hang. `volatile`
+// only blocks compiler-level reordering/caching of a single access - it
+// is not a cross-core memory barrier, so a write on the sensor task's
+// core is not guaranteed to become visible to the watchdog task running
+// on the other core in any bounded time. std::atomic's default
+// sequentially-consistent ops emit the actual memory-barrier instructions
+// needed for that guarantee on this dual-core Xtensa target.
+static std::atomic<unsigned long> g_icm20948LastHeartbeatMs{0};
+static std::atomic<bool> g_icm20948WatchdogArmed{false};
+static const unsigned long ICM20948_WATCHDOG_TIMEOUT_MS = 8000;
+
+// A cheap "where in the loop was I last" marker, updated at each key step
+// below with a plain string-literal pointer assignment (no formatting, no
+// logging - negligible cost every cycle). Read by the watchdog only in
+// the rare case it's about to force a restart, so a restart's log message
+// says exactly which call the task was in rather than just that it froze
+// - see doc/IcmMagnetometerDmpConflict.md's "Bench verification" section
+// for the real hang this helped root-cause live.
+static volatile const char *g_icm20948LastCheckpoint = "not started";
+
+static void icm20948WatchdogTaskEntry(GwApi *api)
+{
+    GwLog *logger = api->getLogger();
+    LOG_DEBUG(GwLog::LOG, "icm20948 watchdog task running on core %d", xPortGetCoreID());
+    while (true)
+    {
+        delay(2000);
+        if (!g_icm20948WatchdogArmed)
+            continue;
+        unsigned long age = millis() - g_icm20948LastHeartbeatMs;
+        if (age > ICM20948_WATCHDOG_TIMEOUT_MS)
+        {
+            // Real bug found live, 2026-08-06: GwLog::logDebug()/flush()
+            // both do xSemaphoreTake(locker, portMAX_DELAY) on a single
+            // GLOBAL mutex shared by every LOG_DEBUG call in the whole
+            // firmware. The whole point of this watchdog is to recover
+            // from the sensor task hanging mid-operation - if that hang
+            // happened while the sensor task held this same lock (e.g.
+            // mid-LOG_DEBUG when the I2C call it was about to make wedged),
+            // then THIS task's own LOG_DEBUG call a few lines below would
+            // block forever waiting for a lock that will never be freed,
+            // and the restart below would never happen either - exactly
+            // what was observed on real hardware: the watchdog reliably
+            // detected the stale heartbeat but never actually restarted,
+            // even after confirming (via core-ID logging) it was correctly
+            // isolated on its own CPU core. Write directly to the serial
+            // port instead, bypassing GwLog's mutex entirely, so a wedged
+            // log lock can never block the restart itself.
+            USBSerial.printf("icm20948 task watchdog: no heartbeat for %lu ms - forcing restart. Last checkpoint: %s\n",
+                              age, g_icm20948LastCheckpoint);
+            USBSerial.flush();
+            delay(100);
+            ESP.restart();
+        }
+    }
+}
+
 static void runIcm20948Task(GwApi *api)
 {
     GwLog *logger = api->getLogger();
     LOG_DEBUG(GwLog::LOG, "icm20948 task starting, sda=%d scl=%d", GWICM20948_SDA_PIN, GWICM20948_SCL_PIN);
+    LOG_DEBUG(GwLog::LOG, "icm20948 sensor task running on core %d", xPortGetCoreID());
 
     Icm20948WebData webData;
     api->registerRequestHandler("data", [&webData](AsyncWebServerRequest *request)
@@ -429,6 +503,14 @@ static void runIcm20948Task(GwApi *api)
     Quaternion lastDmpQuat;
     unsigned long lastDmpSampleMs = 0;
 
+    // Persists the last good DMP-sourced compass reading the same way
+    // lastDmpQuat/haveDmpSample persist the last good quaternion - the
+    // compass field doesn't necessarily land in every single frame this
+    // cycle drains, so "sticky last value" (not "this cycle only") is the
+    // right semantics. See doc/IcmMagnetometerDmpConflict.md.
+    bool haveDmpCompassSample = false;
+    Vec3 lastDmpMagRaw;
+
     // The actual heading/attitude pipeline (fusion filter, DMP validator,
     // source selector, mag disturbance monitor, heading filter, ROT
     // cross-check state) lives in ImuCycleProcessor now - the SAME class
@@ -444,11 +526,37 @@ static void runIcm20948Task(GwApi *api)
     double lastHeadingRad = 0;
     bool haveLastHeading = false;
 
+    // Arm the watchdog only now - startup above (I2C scan, up to 6 sensor
+    // init retries at 300ms each, DMP init) can legitimately take a few
+    // seconds and shouldn't be mistaken for a hang.
+    g_icm20948LastHeartbeatMs = millis();
+    g_icm20948WatchdogArmed = true;
+
     while (true)
     {
+        g_icm20948LastCheckpoint = "before dataReady";
         delay(loopDelayMs);
         if (!hw.dataReady())
             continue;
+        // Real bug found live, 2026-08-06: this used to refresh the
+        // heartbeat unconditionally at the very top of the loop, before
+        // even checking dataReady(). That made the watchdog blind to
+        // exactly the failure mode it needed to catch most: dataReady()
+        // returning false forever (not hanging, just perpetually "no new
+        // data") lets the loop spin harmlessly through delay()+continue
+        // indefinitely, refreshing a heartbeat that looks perfectly fresh
+        // while roll/pitch/heading never update again - confirmed live via
+        // a real-time watchdog check log that sat at "checkpoint=before
+        // dataReady" with heartbeat age never exceeding ~100ms for 90+
+        // seconds straight during a real hang. The heartbeat now only
+        // advances on a cycle that actually got past dataReady(), so it
+        // reflects genuine progress - at the configured rate (up to
+        // 10Hz+) dataReady() should return true well within the 8s
+        // timeout under any normal operation, so this doesn't cost any
+        // real margin against the original hang scenario this watchdog
+        // was built for either.
+        g_icm20948LastHeartbeatMs = millis();
+        g_icm20948LastCheckpoint = "after dataReady, before readAGMT";
 
         unsigned long loopStartUs = micros();
         unsigned long sensorReadUs = 0;
@@ -456,6 +564,7 @@ static void runIcm20948Task(GwApi *api)
 
         unsigned long sensorReadStartUs = micros();
         hw.readAGMT();
+        g_icm20948LastCheckpoint = "after readAGMT";
 
         unsigned long nowMs = millis();
         double dtSec = (nowMs - lastCycleMs) / 1000.0;
@@ -522,6 +631,55 @@ static void runIcm20948Task(GwApi *api)
         sensorReadUs += micros() - sensorReadStartUs;
         webData.setAccel(accelBoat.x, accelBoat.y, accelBoat.z);
 
+        // --- DMP sample (if enabled/available). Placed here, before
+        // anything below consumes magBoat (calibration engines, cycleIn),
+        // so the magBoat override a few lines down is visible to every
+        // downstream consumer this cycle - not just the ones that happen
+        // to run later in the function. ---
+        unsigned long dmpReadStartUs = micros();
+        bool dmpFreshThisCycle = false;
+        if (dmpOk)
+        {
+            g_icm20948LastCheckpoint = "before readDmpQuaternion";
+            Quaternion q;
+            if (hw.readDmpQuaternion(q))
+            {
+                lastDmpQuat = q;
+                haveDmpSample = true;
+                lastDmpSampleMs = nowMs;
+                dmpFreshThisCycle = true;
+            }
+            g_icm20948LastCheckpoint = "before readDmpCompass";
+            // Must run after readDmpQuaternion() above - see readDmpCompass()'s
+            // doc comment (it reads back what that call just captured, it
+            // does not drain the FIFO itself).
+            Vec3 dmpMag;
+            if (hw.readDmpCompass(dmpMag))
+            {
+                lastDmpMagRaw = dmpMag;
+                haveDmpCompassSample = true;
+            }
+            g_icm20948LastCheckpoint = "after DMP block";
+        }
+        sensorReadUs += micros() - dmpReadStartUs;
+        int dmpAgeMs = (int)(nowMs - lastDmpSampleMs);
+
+        // The non-DMP raw-register magnetometer parse (readMagRaw(), used
+        // for magBoat above) decodes garbage once DMP is active - DMP's own
+        // startupDMP() reconfigures I2C_SLV0's shadow-register layout for
+        // its own use, which readAGMT()'s fixed-layout parsing doesn't know
+        // about. See doc/IcmMagnetometerDmpConflict.md. Once DMP is active
+        // and has produced at least one good compass sample, prefer that
+        // DMP-native source instead - falls back to the raw parse only
+        // while DMP is off or hasn't produced a compass sample yet (e.g.
+        // briefly at boot), where the raw parse is the correct path. Done
+        // before the calibration engines below are fed, so both the live
+        // Calibration-panel hard-iron tracking (calControl.feedMagSample)
+        // and the CSV diagnostic capture see the corrected value too, not
+        // just the heading pipeline.
+        if (dmpOk && haveDmpCompassSample)
+            magBoat = ImuCoordinateTransform::toBoatFrame(lastDmpMagRaw, orientation);
+
         // --- Calibration (moved ahead of Rate of Turn so gyro bias
         // correction applies before the gyro vector is used anywhere -
         // ImuCalibrationOps::applyGyro was previously never called, see
@@ -572,23 +730,6 @@ static void runIcm20948Task(GwApi *api)
         calControl.feedGyroSample(gyroBoat, accelBoat.norm());
         calControl.feedMagSample(magBoat.x, magBoat.y);
 
-        // --- DMP sample (if enabled/available) ---
-        unsigned long dmpReadStartUs = micros();
-        bool dmpFreshThisCycle = false;
-        if (dmpOk)
-        {
-            Quaternion q;
-            if (hw.readDmpQuaternion(q))
-            {
-                lastDmpQuat = q;
-                haveDmpSample = true;
-                lastDmpSampleMs = nowMs;
-                dmpFreshThisCycle = true;
-            }
-        }
-        sensorReadUs += micros() - dmpReadStartUs;
-        int dmpAgeMs = (int)(nowMs - lastDmpSampleMs);
-
         // --- Run the shared per-cycle pipeline (ImuCycleProcessor -
         // see lib/icm20948pure/ImuCycleProcessor.h). This is the SAME
         // code debug replay uses (GwIcm20948ReplayTask), not a parallel
@@ -602,7 +743,14 @@ static void runIcm20948Task(GwApi *api)
         cycleIn.dmpOk = dmpOk;
         cycleIn.haveDmpSample = haveDmpSample;
         cycleIn.dmpFreshThisCycle = dmpFreshThisCycle;
-        cycleIn.dmpQuat = lastDmpQuat;
+        // DMP computes this quaternion entirely in the chip's own fixed
+        // physical frame - it has no idea icmOrientation exists. Rotate it
+        // into boat frame here, at the same point accelBoat/gyroBoat/
+        // magBoat already get transformed above, so DMP-sourced roll/
+        // pitch/heading respect the configured mounting orientation
+        // instead of silently bypassing it (real bug, found bench-testing:
+        // switching orientation had zero effect on DMP-mode roll/pitch).
+        cycleIn.dmpQuat = ImuCoordinateTransform::rotateDmpQuaternion(lastDmpQuat, orientation);
         cycleIn.dmpAgeMs = (unsigned long)dmpAgeMs;
         cycleIn.dtSec = dtSec;
         cycleIn.nowMs = nowMs;
@@ -769,8 +917,30 @@ void initIcm20948(GwApi *api)
     // registration) is in runIcm20948Task instead, for the opposite
     // reason - see its doc comment too.
     capture.startWriterTask(api);
+    // Must also run here (init phase) - see icm20948WatchdogTaskEntry's
+    // doc comment above runIcm20948Task().
+    //
+    // Both this task and runIcm20948Task below are pinned to opposite
+    // CPU cores (real bug found live, 2026-08-06: three separate hangs
+    // during physical handling, watchdog never fired despite being
+    // confirmed created and running - see
+    // doc/IcmMagnetometerDmpConflict.md's "Bench verification" section).
+    // Root cause: both tasks were created via the same unpinned
+    // xTaskCreate call, so FreeRTOS's SMP scheduler was free to place
+    // them on the same core - if the I2C hang is a genuine hardware-
+    // register busy-spin deep in the driver stack that never yields
+    // (matching this watchdog's own original doc comment), it can
+    // starve everything else scheduled on that core regardless of
+    // nominal task priority. Pinning to different cores guarantees the
+    // watchdog keeps running even if the sensor task's own core is
+    // fully wedged. Core 1 for the sensor task matches arduino-esp32's
+    // own conventional default placement for the main loop task; core 0
+    // (shared with the WiFi/BT controller's own tasks) is fine for the
+    // watchdog since it only wakes every 2s to check a timestamp -
+    // negligible contention.
+    api->addUserTask(icm20948WatchdogTaskEntry, String("icm20948Wdt"), 2000, /*coreId=*/0);
     // Stack is 16000 bytes - unchanged from the pre-rewrite code (the
     // intermittent cold-boot crash this project hit was an I2C/WiFi boot
     // race, not stack exhaustion - see GwIcm20948HardwareAdapter::begin()).
-    api->addUserTask(runIcm20948Task, String("icm20948Task"), 16000);
+    api->addUserTask(runIcm20948Task, String("icm20948Task"), 16000, /*coreId=*/1);
 }

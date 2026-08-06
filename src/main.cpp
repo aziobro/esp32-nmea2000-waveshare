@@ -366,7 +366,7 @@ public:
   virtual void registerRequestHandler(const String &url,HandlerFunction handler){
   }
   virtual void addCapability(const String &name, const String &value){}
-  virtual bool addUserTask(GwUserTaskFunction task,const String Name, int stackSize=2000){
+  virtual bool addUserTask(GwUserTaskFunction task,const String Name, int stackSize=2000, int coreId=-1){
     return false;
   }
   virtual void setCalibrationValue(const String &name, double value){

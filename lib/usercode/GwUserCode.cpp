@@ -296,7 +296,7 @@ public:
         if (! isInit) return;
         userCapabilities[name]=value;
     }
-    virtual bool addUserTask(GwUserTaskFunction task,const String tname, int stackSize=2000){
+    virtual bool addUserTask(GwUserTaskFunction task,const String tname, int stackSize=2000, int coreId=-1){
         if (! isInit){
             api->getLogger()->logDebug(GwLog::ERROR,"trying to add a user task %s outside init",tname.c_str());
             return false;
@@ -305,7 +305,7 @@ public:
             api->getLogger()->logDebug(GwLog::ERROR,"trying to add a user task %s that already exists",tname.c_str());
             return false;
         }
-        userTasks.push_back(GwUserTask(tname,task,stackSize));
+        userTasks.push_back(GwUserTask(tname,task,stackSize,0,coreId));
         api->getLogger()->logDebug(GwLog::LOG,"adding user task %s",tname.c_str());
         return true;
     }
@@ -366,7 +366,13 @@ void userTaskStart(void *p){
 }
 void GwUserCode::startAddOnTask(GwApiInternal *api,GwUserTask *task,int sourceId,String name){
     task->api=new TaskApi(api,sourceId,mainLock,name,taskData);
-    xTaskCreate(userTaskStart,name.c_str(),task->stackSize,task,3,NULL);
+    // coreId<0 (the default for every existing caller) keeps the exact
+    // prior behavior - tskNO_AFFINITY, scheduler picks. Only a task that
+    // explicitly asks for a specific core (currently just the icm20948
+    // watchdog, which must survive another task hard-hanging its own
+    // core) gets pinned - see GwApi::addUserTask's doc comment.
+    BaseType_t coreId = (task->coreId >= 0) ? (BaseType_t)task->coreId : tskNO_AFFINITY;
+    xTaskCreatePinnedToCore(userTaskStart,name.c_str(),task->stackSize,task,3,NULL,coreId);
 }
 void GwUserCode::startUserTasks(int baseId){
     LOG_DEBUG(GwLog::DEBUG,"starting %d user tasks",userTasks.size());

@@ -23,17 +23,21 @@ class GwUserTask{
         GwApiInternal *api=NULL;
         int stackSize=2000;
         int order=0;
+        // -1 = tskNO_AFFINITY (no pinning, existing behavior for every
+        // task that doesn't ask for a specific core).
+        int coreId=-1;
         GwUserTask(String name,TaskFunction_t task,int stackSize=DEFAULT_STACKSIZE){
             this->name=name;
             this->task=task;
             this->stackSize=stackSize;
         }
-        GwUserTask(String name, GwUserTaskFunction task,int stackSize=DEFAULT_STACKSIZE, int order=0){
+        GwUserTask(String name, GwUserTaskFunction task,int stackSize=DEFAULT_STACKSIZE, int order=0, int coreId=-1){
             this->name=name;
             this->usertask=task;
             this->isUserTask=true;
             this->stackSize=stackSize;
             this->order=order;
+            this->coreId=coreId;
         }
 };
 

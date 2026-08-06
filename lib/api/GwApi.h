@@ -201,8 +201,16 @@ class GwApi{
          * this allows you decide based on defines/config if a user task really should be added
          * so this is the preferred solution over DECLARE_USERTASK
          * The name should be similar to the function name of the user task (although not mandatory)
+         * @param coreId: pin the task to a specific CPU core (0 or 1 on
+         *                dual-core ESP32 targets). Default -1 means no
+         *                affinity (tskNO_AFFINITY) - the scheduler picks,
+         *                matching all existing behavior unchanged. Only
+         *                needed when a task must survive another task
+         *                hard-hanging its own core (e.g. a watchdog) -
+         *                see lib/icm20948task/GwIcm20948Task.cpp for the
+         *                motivating case.
         */
-        virtual bool addUserTask(GwUserTaskFunction task,const String Name, int stackSize=2000)=0;
+        virtual bool addUserTask(GwUserTaskFunction task,const String Name, int stackSize=2000, int coreId=-1)=0;
         /**
          * set a value that is used for calibration in config values
          * for cfg types calset, calvalue

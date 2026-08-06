@@ -41,7 +41,27 @@ public:
     // Drains the FIFO fully (more than one frame can be queued if the
     // DMP's internal rate exceeds our poll rate - only the newest
     // matters). Returns true if at least one new Quat9 sample was found.
+    // As a side effect, also captures any Compass_Calibr field present in
+    // the same frames into a private slot - see readDmpCompass() below for
+    // why this isn't a second, independent FIFO drain.
     bool readDmpQuaternion(Quaternion &out);
+
+    // Returns the DMP's own calibrated-compass reading (uT, same unit as
+    // readMagRaw()) captured during the MOST RECENT readDmpQuaternion()
+    // call - does NOT read the FIFO itself. Must be called only after
+    // readDmpQuaternion() in the same cycle. This is deliberately not a
+    // second independent FIFO drain: one readDMPdataFromFIFO() call
+    // returns a single frame whose header can carry multiple fields at
+    // once (Quat9 and Compass_Calibr routinely land in the very same
+    // frame here), and readDmpQuaternion() already drains the FIFO fully
+    // each cycle - a second do-while loop calling readDMPdataFromFIFO()
+    // again afterwards would find nothing left to read and report false
+    // every cycle. See doc/IcmMagnetometerDmpConflict.md: this exists
+    // because the non-DMP raw-register magnetometer parsing in
+    // readAGMT()/readMagRaw() silently decodes garbage once the DMP has
+    // reconfigured I2C_SLV0's shadow-register layout - the DMP's own
+    // Compass_Calibr FIFO field is the correct source once DMP is active.
+    bool readDmpCompass(Vec3 &out);
 
     // Count of readDMPdataFromFIFO() calls that returned an error status
     // other than Ok/FIFOMoreDataAvail, since boot - exposed for
@@ -61,4 +81,6 @@ private:
     double lastMagX = 0, lastMagY = 0, lastMagZ = 0;
     uint32_t fifoErrors = 0;
     uint32_t framesDrained = 0;
+    Vec3 lastDmpCompassRaw;
+    bool haveDmpCompassSample = false;
 };
