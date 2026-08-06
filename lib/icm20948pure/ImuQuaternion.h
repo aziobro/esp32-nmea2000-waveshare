@@ -32,6 +32,14 @@ namespace ImuQuaternion
     void toEuler(const Quaternion &q, double &rollRad, double &pitchRad, double &yawRad);
     Quaternion fromEuler(double rollRad, double pitchRad, double yawRad);
 
+    // Hamilton product (a then b is NOT the same as b then a - order
+    // matters). Consistent with the body-to-world convention toEuler/
+    // fromEuler already use (v_world = q * v_body * conjugate(q)).
+    Quaternion multiply(const Quaternion &a, const Quaternion &b);
+
+    // w,-x,-y,-z - the inverse of a unit quaternion.
+    Quaternion conjugate(const Quaternion &q);
+
     // Shortest angular difference between two quaternions' yaw components
     // alone (degrees) - used to compare DMP heading against the software
     // compass/fusion heading without needing a full quaternion distance

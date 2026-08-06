@@ -124,6 +124,54 @@ void test_yaw_difference_across_wrap(void)
     TEST_ASSERT_DOUBLE_WITHIN(1e-3, 2.0, fabs(ImuQuaternion::yawDifferenceDeg(a, b)));
 }
 
+void test_multiply_by_identity_is_noop(void)
+{
+    Quaternion q = ImuQuaternion::fromEuler(0.3, -0.5, 1.2);
+    Quaternion id;
+    Quaternion out = ImuQuaternion::multiply(q, id);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, q.w, out.w);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, q.x, out.x);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, q.y, out.y);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, q.z, out.z);
+}
+
+void test_multiply_by_conjugate_is_identity(void)
+{
+    Quaternion q = ImuQuaternion::normalize(ImuQuaternion::fromEuler(0.4, 0.2, -0.9));
+    Quaternion out = ImuQuaternion::multiply(q, ImuQuaternion::conjugate(q));
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 1.0, out.w);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, out.x);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, out.y);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, out.z);
+}
+
+// Quaternion multiplication is not commutative - a real bug class (using
+// a*b where b*a was meant, or vice versa) wouldn't be caught by either
+// test above, since both a*conj(a) and a*identity are order-insensitive.
+void test_multiply_is_not_commutative(void)
+{
+    Quaternion a = ImuQuaternion::fromEuler(0.5, 0, 0);
+    Quaternion b = ImuQuaternion::fromEuler(0, 0.5, 0);
+    Quaternion ab = ImuQuaternion::multiply(a, b);
+    Quaternion ba = ImuQuaternion::multiply(b, a);
+    double diff = fabs(ab.w - ba.w) + fabs(ab.x - ba.x) + fabs(ab.y - ba.y) + fabs(ab.z - ba.z);
+    TEST_ASSERT_TRUE(diff > 1e-6);
+}
+
+void test_conjugate_negates_vector_part_only(void)
+{
+    Quaternion q;
+    q.w = 0.5;
+    q.x = 0.1;
+    q.y = -0.2;
+    q.z = 0.3;
+    Quaternion c = ImuQuaternion::conjugate(q);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, q.w, c.w);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, -q.x, c.x);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, -q.y, c.y);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, -q.z, c.z);
+}
+
 int main(int argc, char **argv)
 {
     UNITY_BEGIN();
@@ -137,5 +185,9 @@ int main(int argc, char **argv)
     RUN_TEST(test_euler_round_trip_various_angles);
     RUN_TEST(test_yaw_difference_zero_for_same_heading);
     RUN_TEST(test_yaw_difference_across_wrap);
+    RUN_TEST(test_multiply_by_identity_is_noop);
+    RUN_TEST(test_multiply_by_conjugate_is_identity);
+    RUN_TEST(test_multiply_is_not_commutative);
+    RUN_TEST(test_conjugate_negates_vector_part_only);
     return UNITY_END();
 }

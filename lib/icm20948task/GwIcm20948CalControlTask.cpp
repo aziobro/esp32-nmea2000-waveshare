@@ -126,6 +126,44 @@ void Icm20948CalControl::handleCalControl(AsyncWebServerRequest *request)
         return;
     }
 
+    // Bench/field workaround for a real, reproducible failure found live
+    // on the boat: the general /api/setConfig endpoint
+    // (handleConfigRequestData in src/main.cpp) silently failed every
+    // time it was tried this session (empty HTTP reply, no restart, no
+    // config change) for both icmPitchInv and logLevel - root cause not
+    // yet diagnosed, unrelated to this task. The underlying
+    // config->setValue()/updateValue() calls are fine (same mechanism the
+    // "import" action above already uses reliably for icmOrientation) -
+    // only the generic form-POST endpoint is broken. Exposes just the
+    // three sign-invert flags a physical roll/pitch/heading sign test can
+    // need to flip, via the same reliable path, until setConfig itself
+    // gets a proper fix. Each param is optional and only touched if
+    // present, so this doesn't force a value on flags the caller doesn't
+    // mention.
+    if (action == "setInvert")
+    {
+        if (request->hasParam("rollInvert"))
+        {
+            String v = request->getParam("rollInvert")->value();
+            config->setValue(GwConfigDefinitions::icmRollInv, v);
+            config->updateValue(GwConfigDefinitions::icmRollInv, v);
+        }
+        if (request->hasParam("pitchInvert"))
+        {
+            String v = request->getParam("pitchInvert")->value();
+            config->setValue(GwConfigDefinitions::icmPitchInv, v);
+            config->updateValue(GwConfigDefinitions::icmPitchInv, v);
+        }
+        if (request->hasParam("hdgInvert"))
+        {
+            String v = request->getParam("hdgInvert")->value();
+            config->setValue(GwConfigDefinitions::icmHdgInv, v);
+            config->updateValue(GwConfigDefinitions::icmHdgInv, v);
+        }
+        request->send(200, "application/json", "{\"status\":\"OK\"}");
+        return;
+    }
+
     request->send(200, "application/json", "{\"status\":\"error\",\"message\":\"unknown action\"}");
 }
 

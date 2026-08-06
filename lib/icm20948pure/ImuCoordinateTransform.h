@@ -108,6 +108,21 @@ namespace ImuCoordinateTransform
     // Convenience: matrixFor(orientation).apply(sensorFrameVec)
     Vec3 toBoatFrame(const Vec3 &sensorFrameVec, MountOrientation orientation);
 
+    // The unit quaternion equivalent of matrixFor(orientation) - i.e. the
+    // same sensor-frame-to-boat-frame rotation, in quaternion form.
+    Quaternion quaternionFor(MountOrientation orientation);
+
+    // Re-expresses a DMP quaternion (which InvenSense's DMP computes
+    // entirely in the chip's own fixed physical frame - it has no idea
+    // this project even has a configurable mounting orientation) in the
+    // boat frame, so DMP-sourced roll/pitch/heading respect icmOrientation
+    // the same way the accelerometer/gyro/magnetometer paths already do
+    // via toBoatFrame() above. For MountOrientation::Forward (identity)
+    // this is an exact no-op, so a currently-deployed unit's behavior is
+    // unchanged unless a different orientation is selected - see
+    // matrixFor's own doc comment for why that invariant matters.
+    Quaternion rotateDmpQuaternion(const Quaternion &dmpQuat, MountOrientation orientation);
+
     // True if every one of the 24 orientation matrices is a valid rotation
     // (orthogonal, determinant +1) - used by tests, exposed here so the
     // check itself is testable/reusable rather than duplicated.

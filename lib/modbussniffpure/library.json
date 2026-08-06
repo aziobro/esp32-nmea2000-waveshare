@@ -1,0 +1,7 @@
+{
+    "name": "modbussniffpure",
+    "version": "0.1.0",
+    "description": "Arduino/ESP32-independent Modbus RTU passive-sniffer core - CRC16 and inter-frame-gap frame sync. Desktop-testable; see lib/eg4batterytask/platformio.ini for the native test env that consumes this as a local dependency.",
+    "frameworks": "*",
+    "platforms": "*"
+}

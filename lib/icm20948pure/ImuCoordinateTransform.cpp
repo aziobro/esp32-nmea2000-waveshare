@@ -1,4 +1,5 @@
 #include "ImuCoordinateTransform.h"
+#include "ImuQuaternion.h"
 #include <math.h>
 
 namespace
@@ -117,6 +118,70 @@ namespace ImuCoordinateTransform
     Vec3 toBoatFrame(const Vec3 &sensorFrameVec, MountOrientation orientation)
     {
         return matrixFor(orientation).apply(sensorFrameVec);
+    }
+
+    // Standard robust rotation-matrix-to-quaternion conversion (Shepperd's
+    // method - branches on the largest of {trace, m00, m11, m22} to avoid
+    // dividing by a near-zero term, which a naive trace-only formula would
+    // hit for some of the 180-degree-rotation orientations in this table,
+    // e.g. Aft's trace is -1). Derived from, and therefore automatically
+    // consistent with, the exact sandwich convention (v' = q*v*conj(q))
+    // toEuler/fromEuler already use - test_coordinate_transform verifies
+    // this by checking quaternionFor(o) sandwich-applied to sample vectors
+    // reproduces matrixFor(o).apply() for all 24 orientations, rather than
+    // trusting the derivation alone.
+    Quaternion quaternionFor(MountOrientation orientation)
+    {
+        Mat3 m = matrixFor(orientation);
+        double trace = m.m[0][0] + m.m[1][1] + m.m[2][2];
+        Quaternion q;
+        if (trace > 0)
+        {
+            double s = sqrt(trace + 1.0) * 2.0; // s = 4*qw
+            q.w = 0.25 * s;
+            q.x = (m.m[2][1] - m.m[1][2]) / s;
+            q.y = (m.m[0][2] - m.m[2][0]) / s;
+            q.z = (m.m[1][0] - m.m[0][1]) / s;
+        }
+        else if (m.m[0][0] > m.m[1][1] && m.m[0][0] > m.m[2][2])
+        {
+            double s = sqrt(1.0 + m.m[0][0] - m.m[1][1] - m.m[2][2]) * 2.0; // s = 4*qx
+            q.w = (m.m[2][1] - m.m[1][2]) / s;
+            q.x = 0.25 * s;
+            q.y = (m.m[0][1] + m.m[1][0]) / s;
+            q.z = (m.m[0][2] + m.m[2][0]) / s;
+        }
+        else if (m.m[1][1] > m.m[2][2])
+        {
+            double s = sqrt(1.0 + m.m[1][1] - m.m[0][0] - m.m[2][2]) * 2.0; // s = 4*qy
+            q.w = (m.m[0][2] - m.m[2][0]) / s;
+            q.x = (m.m[0][1] + m.m[1][0]) / s;
+            q.y = 0.25 * s;
+            q.z = (m.m[1][2] + m.m[2][1]) / s;
+        }
+        else
+        {
+            double s = sqrt(1.0 + m.m[2][2] - m.m[0][0] - m.m[1][1]) * 2.0; // s = 4*qz
+            q.w = (m.m[1][0] - m.m[0][1]) / s;
+            q.x = (m.m[0][2] + m.m[2][0]) / s;
+            q.y = (m.m[1][2] + m.m[2][1]) / s;
+            q.z = 0.25 * s;
+        }
+        return ImuQuaternion::normalize(q);
+    }
+
+    Quaternion rotateDmpQuaternion(const Quaternion &dmpQuat, MountOrientation orientation)
+    {
+        // Derivation: DMP defines v_world = dmpQuat * v_sensor * conj(dmpQuat).
+        // matrixFor defines v_boat = M * v_sensor, i.e. (in quaternion form)
+        // v_boat = q_M * v_sensor * conj(q_M), so v_sensor = conj(q_M) *
+        // v_boat * q_M. Substituting: v_world = (dmpQuat * conj(q_M)) *
+        // v_boat * conj(dmpQuat * conj(q_M)) - so the boat-frame quaternion
+        // is dmpQuat * conj(q_M). For Forward (q_M = identity) this
+        // reduces to dmpQuat * identity = dmpQuat exactly, the required
+        // no-op case.
+        Quaternion qM = quaternionFor(orientation);
+        return ImuQuaternion::multiply(dmpQuat, ImuQuaternion::conjugate(qM));
     }
 
     bool isValidRotation(const Mat3 &m, double tolerance)

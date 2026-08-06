@@ -1,0 +1,58 @@
+[
+    {
+        "name": "eg4Enable",
+        "label": "Sniff RS485 (Modbus)",
+        "type": "boolean",
+        "default": "true",
+        "description": "passively listen on the onboard RS485 port for Modbus RTU traffic between an inverter and battery already talking to each other - never transmits anything onto the bus itself.",
+        "category": "eg4battery",
+        "capabilities": {
+            "eg4battery": "true"
+        }
+    },
+    {
+        "name": "eg4Baud",
+        "label": "Baud rate",
+        "type": "number",
+        "default": "9600",
+        "check": "checkMinMax",
+        "min": 1200,
+        "max": 115200,
+        "description": "UART baud rate of the RS485 bus being sniffed - must match whatever the inverter/battery are actually using. 9600 is the most common default for battery/BMS Modbus RTU links; try 19200 next if captures show only noise.",
+        "category": "eg4battery",
+        "capabilities": {
+            "eg4battery": "true"
+        }
+    },
+    {
+        "name": "eg4Format",
+        "label": "Frame format",
+        "type": "list",
+        "default": "8N1",
+        "description": "UART data/parity/stop-bit format - 8N1 is by far the most common for Modbus RTU, 8E1 is the other real possibility.",
+        "list": [
+            {"l": "8N1", "v": "8N1"},
+            {"l": "8E1", "v": "8E1"},
+            {"l": "8O1", "v": "8O1"},
+            {"l": "8N2", "v": "8N2"}
+        ],
+        "category": "eg4battery",
+        "capabilities": {
+            "eg4battery": "true"
+        }
+    },
+    {
+        "name": "eg4GapMs",
+        "label": "Frame gap threshold (ms)",
+        "type": "number",
+        "default": "6",
+        "check": "checkMinMax",
+        "min": 2,
+        "max": 100,
+        "description": "how much inter-byte silence counts as \"this frame ended\" - Modbus RTU itself only requires about 3.5 character times (under 4ms at 9600 baud), so the default here is already generous. Only worth raising if captures show single real frames getting split in two.",
+        "category": "eg4battery",
+        "capabilities": {
+            "eg4battery": "true"
+        }
+    }
+]

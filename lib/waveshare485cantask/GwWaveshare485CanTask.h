@@ -62,6 +62,15 @@
 // tied to both RE and DE on U7 (SP3485EN) - i.e. one pin, active HIGH
 // enables the driver (transmit), LOW enables the receiver.
 //
+// Base and Garmin variants only: on the AIS variant this same physical
+// port is instead owned outright by lib/eg4batterytask (see below) - UART1
+// is claimed automatically by the generic channel mechanism whenever
+// GWSERIAL_TYPE is #define'd at all (CFG_SERIAL's #ifdef GWSERIAL_TYPE gate
+// in lib/channel/GwChannelList.cpp has no board-variant awareness of its
+// own), so simply not defining it here for the AIS variant is what leaves
+// Serial1 free for that task to take raw ownership of - the same freedom
+// I2C already has, since no generic I2C channel exists to auto-claim it.
+#if defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN) || defined(BOARD_WAVESHARE_ESP32S3_RS485_CAN_GARMIN)
 // IMPORTANT: the core's static enable-pin logic (see
 // createSerialImpl() in lib/channel/GwChannelList.cpp) only knows how to
 // drive GWSERIAL_ENA for GWSERIAL_TYPE_UNI / _RX / _TX - there is no case
@@ -75,6 +84,7 @@
 #define GWSERIAL_ENA GPIO_NUM_21
 #define GWSERIAL_ELO 0
 #define GWSERIAL_TYPE GWSERIAL_TYPE_UNI
+#endif
 
 // Externally powered (screw terminal / USB-C), no current drawn from the
 // NMEA2000 bus itself - LEN stays 0 (the core's own default).
@@ -180,6 +190,21 @@
 #define GWSERIAL2_TX GPIO_NUM_2
 #define GWSERIAL2_TYPE GWSERIAL_TYPE_RX
 #define GWSERIAL2_BAUD 38400
+
+// Onboard RS485 port (UART1 -> SP3485EN transceiver) - same physical pins
+// as GWSERIAL_RX/TX/ENA above, but NOT defined as GWSERIAL_* on this board
+// variant (see the #if guard around that block), which leaves UART1
+// completely unclaimed by the generic channel mechanism and free for
+// lib/eg4batterytask to open directly. That task never writes to the bus -
+// it holds GWEG4BATTERY_ENA_PIN permanently LOW (receiver-enabled) at
+// init and never touches it again - passively sniffing an EG4 battery's
+// Modbus RTU traffic with an inverter that's already polling it, tapped in
+// parallel onto the same RS485 pair (multi-drop, no termination added
+// here - that belongs only at the bus's two true ends).
+#define GWEG4BATTERY_RX_PIN GPIO_NUM_18
+#define GWEG4BATTERY_TX_PIN GPIO_NUM_17
+#define GWEG4BATTERY_ENA_PIN GPIO_NUM_21
+#define GWEG4BATTERY_ENABLE
 #endif
 
 #endif
