@@ -641,6 +641,7 @@ void handleConfigRequestData(AsyncWebServerRequest *request, uint8_t *data, size
     char notFirst;
     char hashChecked;
     char parsingValue;
+    char overlongValue;
     int bName;
     char name[33];
     int bValue;
@@ -691,14 +692,20 @@ void handleConfigRequestData(AsyncWebServerRequest *request, uint8_t *data, size
       if (nv->bValue >= maxSize)
       {
         nv->value[maxSize] = 0;
-        logger.logDebug(GwLog::DEBUG, "parse error value too long %s:%s", nv->name, nv->value);
-        nv->bValue = 0;
+        if (!nv->overlongValue)
+        {
+          logger.logDebug(GwLog::ERROR, "parse error value too long for %s - skipping value", nv->name);
+        }
+        nv->overlongValue = 1;
       }
-      while (nv->bValue < maxSize && parsed < len)
+      while ((nv->overlongValue || nv->bValue < maxSize) && parsed < len)
       {
         valueDone = *data == '&';
-        nv->value[nv->bValue] = valueDone ? 0 : *data;
-        nv->bValue++;
+        if (!nv->overlongValue)
+        {
+          nv->value[nv->bValue] = valueDone ? 0 : *data;
+          nv->bValue++;
+        }
         parsed++;
         data++;
         if (valueDone) break;
@@ -711,6 +718,15 @@ void handleConfigRequestData(AsyncWebServerRequest *request, uint8_t *data, size
         } 
       }
       if (valueDone){
+        if (nv->overlongValue)
+        {
+          logger.logDebug(GwLog::ERROR, "skipping overlong config value for %s", nv->name);
+          nv->parsingValue = 0;
+          nv->overlongValue = 0;
+          nv->bName = 0;
+          nv->bValue = 0;
+          continue;
+        }
         String name(nv->name);
         String value(nv->value);
         if (! nv->notFirst){
@@ -740,6 +756,7 @@ void handleConfigRequestData(AsyncWebServerRequest *request, uint8_t *data, size
           }
         }
         nv->parsingValue=0;
+        nv->overlongValue=0;
         nv->bName=0;
         nv->bValue=0;
       }
@@ -1071,4 +1088,3 @@ void loopRun() {
   monitor.setTime(11);
   //logger.logDebug(GwLog::DEBUG,"main loop end");
 }
-

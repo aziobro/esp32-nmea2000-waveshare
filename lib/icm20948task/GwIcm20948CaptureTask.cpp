@@ -34,12 +34,6 @@ void Icm20948Capture::begin(GwApi *api)
 {
     api->registerRequestHandler("capControl", [this](AsyncWebServerRequest *request)
                                  {
-        String action = request->hasParam("action") ? request->getParam("action")->value() : "";
-        if (action == "start") startCapture();
-        else if (action == "stop") stopCapture();
-        else if (action == "clear") clearCapture();
-        else if (action == "serialOn") serialEnabled = true;
-        else if (action == "serialOff") serialEnabled = false;
         if (request->hasParam("rateHz")) {
             int v = request->getParam("rateHz")->value().toInt();
             if (v >= 1 && v <= 100) rateHz = v;
@@ -52,6 +46,12 @@ void Icm20948Capture::begin(GwApi *api)
             int v = request->getParam("maxKB")->value().toInt();
             if (v >= 1 && v <= 512) maxKB = v;
         }
+        String action = request->hasParam("action") ? request->getParam("action")->value() : "";
+        if (action == "start") startCapture();
+        else if (action == "stop") stopCapture();
+        else if (action == "clear") clearCapture();
+        else if (action == "serialOn") serialEnabled = true;
+        else if (action == "serialOff") serialEnabled = false;
         request->send(200, "application/json", "{\"status\":\"OK\"}"); });
 
     api->registerRequestHandler("capStatus", [this](AsyncWebServerRequest *request)

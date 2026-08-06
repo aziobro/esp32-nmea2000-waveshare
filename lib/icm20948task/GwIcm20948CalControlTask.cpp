@@ -1,6 +1,40 @@
 #include "GwIcm20948CalControlTask.h"
 #include "GwJsonDocument.h"
 #include "GwSynchronized.h"
+#include <Arduino.h>
+#include <ctype.h>
+#include <math.h>
+#include <stdlib.h>
+
+namespace
+{
+    double normalizeHeadingOffset(double offsetDeg)
+    {
+        while (offsetDeg <= -180.0)
+            offsetDeg += 360.0;
+        while (offsetDeg > 180.0)
+            offsetDeg -= 360.0;
+        return offsetDeg;
+    }
+
+    void persistHeadingOffset(GwConfigHandler *config, double offsetDeg)
+    {
+        String offsetStr(normalizeHeadingOffset(offsetDeg), 6);
+        config->updateValue(GwConfigDefinitions::icmHdgOff, offsetStr);
+        config->setValue(GwConfigDefinitions::icmHdgOff, offsetStr);
+    }
+
+    bool parseFiniteDouble(const String &text, double &out)
+    {
+        const char *start = text.c_str();
+        char *end = nullptr;
+        out = strtod(start, &end);
+        while (end != nullptr && *end != '\0' && isspace((unsigned char)*end))
+            end++;
+        return end != start && end != nullptr && *end == '\0' && isfinite(out);
+    }
+
+}
 
 void Icm20948CalControl::begin(GwApi *apiIn, GwConfigHandler *configIn)
 {
@@ -41,7 +75,12 @@ void Icm20948CalControl::readCurrentCalibration(ImuCalibration &outCal, Deviatio
         MountOrientation ignoredOrientation; // icmOrientation config remains authoritative - see class comment
         std::string err;
         if (ImuCalibrationJson::importJson(calJsonStr.c_str(), outCal, ignoredOrientation, outDeviationTable, outDeviationEnabled, err))
+        {
+            float hdgOffsetDeg = 0;
+            config->getValue(hdgOffsetDeg, GwConfigDefinitions::icmHdgOff, (float)outCal.fixedHeadingOffsetDeg);
+            outCal.fixedHeadingOffsetDeg = hdgOffsetDeg;
             return;
+        }
         // Stored value is present but doesn't validate - shouldn't happen
         // (this class only ever writes what its own exportJson produced),
         // but fail safely toward the legacy fallback below rather than
@@ -57,17 +96,19 @@ void Icm20948CalControl::readCurrentCalibration(ImuCalibration &outCal, Deviatio
     outDeviationEnabled = false;
 }
 
-void Icm20948CalControl::persistCalibration(const ImuCalibration &cal, const DeviationTable &deviationTable, bool deviationEnabled)
+void Icm20948CalControl::persistCalibration(const ImuCalibration &cal, MountOrientation orientation,
+                                            const DeviationTable &deviationTable, bool deviationEnabled)
 {
-    int orientationIdx = 0;
-    config->getValue(orientationIdx, GwConfigDefinitions::icmOrientation, 0);
-    std::string json = ImuCalibrationJson::exportJson(cal, static_cast<MountOrientation>(orientationIdx), deviationTable, deviationEnabled);
+    ImuCalibration calForJson = cal;
+    calForJson.fixedHeadingOffsetDeg = normalizeHeadingOffset(cal.fixedHeadingOffsetDeg);
+    std::string json = ImuCalibrationJson::exportJson(calForJson, orientation, deviationTable, deviationEnabled);
     String jsonStr(json.c_str());
-    config->setValue(GwConfigDefinitions::icmCalJson, jsonStr);
     config->updateValue(GwConfigDefinitions::icmCalJson, jsonStr);
+    config->setValue(GwConfigDefinitions::icmCalJson, jsonStr);
     String devStr = deviationEnabled ? "true" : "false";
-    config->setValue(GwConfigDefinitions::icmDevEnable, devStr);
     config->updateValue(GwConfigDefinitions::icmDevEnable, devStr);
+    config->setValue(GwConfigDefinitions::icmDevEnable, devStr);
+    persistHeadingOffset(config, calForJson.fixedHeadingOffsetDeg);
 }
 
 void Icm20948CalControl::handleCalControl(AsyncWebServerRequest *request)
@@ -89,7 +130,9 @@ void Icm20948CalControl::handleCalControl(AsyncWebServerRequest *request)
 
     if (action == "reset")
     {
-        persistCalibration(ImuCalibrationOps::identityDefault(), DeviationTable(), false);
+        int orientationIdx = 0;
+        config->getValue(orientationIdx, GwConfigDefinitions::icmOrientation, 0);
+        persistCalibration(ImuCalibrationOps::identityDefault(), static_cast<MountOrientation>(orientationIdx), DeviationTable(), false);
         request->send(200, "application/json", "{\"status\":\"OK\"}");
         return;
     }
@@ -119,9 +162,37 @@ void Icm20948CalControl::handleCalControl(AsyncWebServerRequest *request)
             return;
         }
         String orientationStr(static_cast<int>(outOrientation));
-        config->setValue(GwConfigDefinitions::icmOrientation, orientationStr);
         config->updateValue(GwConfigDefinitions::icmOrientation, orientationStr);
-        persistCalibration(outCal, outDevTable, outDevEnabled);
+        config->setValue(GwConfigDefinitions::icmOrientation, orientationStr);
+        persistCalibration(outCal, outOrientation, outDevTable, outDevEnabled);
+        request->send(200, "application/json", "{\"status\":\"OK\"}");
+        return;
+    }
+
+    if (action == "setHeadingOffset")
+    {
+        if (!request->hasParam("headingOffsetDeg"))
+        {
+            request->send(200, "application/json", "{\"status\":\"error\",\"message\":\"missing headingOffsetDeg parameter\"}");
+            return;
+        }
+
+        double headingOffsetDeg = 0.0;
+        if (!parseFiniteDouble(request->getParam("headingOffsetDeg")->value(), headingOffsetDeg))
+        {
+            request->send(200, "application/json", "{\"status\":\"error\",\"message\":\"headingOffsetDeg must be a finite number\"}");
+            return;
+        }
+
+        ImuCalibration cal;
+        DeviationTable devTable;
+        bool devEnabled = false;
+        readCurrentCalibration(cal, devTable, devEnabled);
+        cal.fixedHeadingOffsetDeg = headingOffsetDeg;
+
+        int orientationIdx = 0;
+        config->getValue(orientationIdx, GwConfigDefinitions::icmOrientation, 0);
+        persistCalibration(cal, static_cast<MountOrientation>(orientationIdx), devTable, devEnabled);
         request->send(200, "application/json", "{\"status\":\"OK\"}");
         return;
     }
@@ -145,20 +216,20 @@ void Icm20948CalControl::handleCalControl(AsyncWebServerRequest *request)
         if (request->hasParam("rollInvert"))
         {
             String v = request->getParam("rollInvert")->value();
-            config->setValue(GwConfigDefinitions::icmRollInv, v);
             config->updateValue(GwConfigDefinitions::icmRollInv, v);
+            config->setValue(GwConfigDefinitions::icmRollInv, v);
         }
         if (request->hasParam("pitchInvert"))
         {
             String v = request->getParam("pitchInvert")->value();
-            config->setValue(GwConfigDefinitions::icmPitchInv, v);
             config->updateValue(GwConfigDefinitions::icmPitchInv, v);
+            config->setValue(GwConfigDefinitions::icmPitchInv, v);
         }
         if (request->hasParam("hdgInvert"))
         {
             String v = request->getParam("hdgInvert")->value();
-            config->setValue(GwConfigDefinitions::icmHdgInv, v);
             config->updateValue(GwConfigDefinitions::icmHdgInv, v);
+            config->setValue(GwConfigDefinitions::icmHdgInv, v);
         }
         request->send(200, "application/json", "{\"status\":\"OK\"}");
         return;
@@ -196,12 +267,14 @@ void Icm20948CalControl::handleGyroCalControl(AsyncWebServerRequest *request)
         DeviationTable devTable;
         bool devEnabled = false;
         readCurrentCalibration(cal, devTable, devEnabled);
+        int orientationIdx = 0;
+        config->getValue(orientationIdx, GwConfigDefinitions::icmOrientation, 0);
         cal.gyroBias[0] = bias.x;
         cal.gyroBias[1] = bias.y;
         cal.gyroBias[2] = bias.z;
         cal.gyroCalibrationValid = true;
         cal.calibrationSequence++;
-        persistCalibration(cal, devTable, devEnabled);
+        persistCalibration(cal, static_cast<MountOrientation>(orientationIdx), devTable, devEnabled);
         gyroCal.cancel();
         request->send(200, "application/json", "{\"status\":\"OK\"}");
         return;
@@ -271,6 +344,8 @@ void Icm20948CalControl::handleMagCalControl(AsyncWebServerRequest *request)
         DeviationTable devTable;
         bool devEnabled = false;
         readCurrentCalibration(cal, devTable, devEnabled);
+        int orientationIdx = 0;
+        config->getValue(orientationIdx, GwConfigDefinitions::icmOrientation, 0);
         cal.magBias[0] = magCal2D.resultBiasX();
         cal.magBias[1] = magCal2D.resultBiasY();
         // Z bias/matrix intentionally left untouched - a boat swing never
@@ -280,7 +355,7 @@ void Icm20948CalControl::handleMagCalControl(AsyncWebServerRequest *request)
         cal.magCalibrationValid = true;
         cal.magCalibrationQuality = magCal2D.resultQuality();
         cal.calibrationSequence++;
-        persistCalibration(cal, devTable, devEnabled);
+        persistCalibration(cal, static_cast<MountOrientation>(orientationIdx), devTable, devEnabled);
         magCal2D.cancel();
         request->send(200, "application/json", "{\"status\":\"OK\"}");
         return;

@@ -332,13 +332,17 @@ repeatedly (stationary on the bench, not a real tumble) and saw exactly
 the signature this whole investigation started from, split across the
 two fields the fix touches:
 
-- `magRawX` (the deliberately-untouched raw-AGMT-parse diagnostic field,
-  `hw.readMagRaw()` passed straight to `webData.setMagRaw()`) sat frozen
-  at **exactly `-38.400`** across 8+ consecutive polls - the identical
-  38.4 uT / 256-count-step signature documented at the top of this file,
-  reproduced live. Confirms the original bug is real and still present
-  in the raw path, exactly as expected (that path was never meant to
-  change).
+- The low-level AGMT register decode, now exposed separately as
+  `magAgmtRawX/Y/Z`, sat frozen at **exactly `-38.400`** across 8+
+  consecutive polls - the identical 38.4 uT / 256-count-step signature
+  documented at the top of this file, reproduced live. Confirms the
+  original bug is real and still present in the AGMT shadow-register path,
+  exactly as expected.
+- `magRawX/Y/Z` was changed after this bench note to mean the effective
+  pre-user-calibration magnetometer source feeding the pipeline and CSV.
+  With DMP active that is the DMP compass field, not the known-bad AGMT
+  decode. `/api/user/icm20948Task/data` reports the selected path in
+  `magSource` (`dmp_compass` or `agmt`).
 - `magBoatX/Y/Z` (the DMP-corrected values the fix actually wires into
   the pipeline) varied smoothly sample-to-sample (e.g. magBoatX: -31.05,
   -31.95, -33.6, -31.65, -31.2, -30.9, -32.7, -31.8 across 8 polls) -

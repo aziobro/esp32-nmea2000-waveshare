@@ -60,9 +60,11 @@ const char *EXPECTED_COLUMNS[] = {
     "compass_heading_deg", "fusion_heading_deg", "output_heading_deg",
     "rate_of_turn_deg_s",
     "active_heading_source", "heading_quality", "rejection_flags",
-    "dmp_sample_age_ms", "fifo_error_count", "sensor_error_count",
+    "dmp_sample_age_ms", "dmp_compass_age_ms",
+    "fifo_error_count", "fifo_drain_limit_count", "sensor_error_count",
 };
 const int NUM_COLUMNS = sizeof(EXPECTED_COLUMNS) / sizeof(EXPECTED_COLUMNS[0]);
+const int LEGACY_NUM_COLUMNS = NUM_COLUMNS - 2;
 
 struct ReplayRow
 {
@@ -96,11 +98,19 @@ std::vector<ReplayRow> loadCsv(const std::string &path)
     if (!std::getline(f, headerLine))
         throw std::runtime_error(path + ": empty file");
     std::vector<std::string> header = splitCsvLine(headerLine);
-    if ((int)header.size() != NUM_COLUMNS)
+    bool legacyCapture = (int)header.size() == LEGACY_NUM_COLUMNS;
+    if ((int)header.size() != NUM_COLUMNS && !legacyCapture)
         throw std::runtime_error(path + ": expected " + std::to_string(NUM_COLUMNS) + " columns, got " + std::to_string(header.size()));
-    for (int i = 0; i < NUM_COLUMNS; i++)
+    int columnsToCheck = legacyCapture ? LEGACY_NUM_COLUMNS : NUM_COLUMNS;
+    for (int i = 0; i < columnsToCheck; i++)
+    {
+        if (legacyCapture && i >= 39)
+            break;
         if (header[i] != EXPECTED_COLUMNS[i])
             throw std::runtime_error(path + ": column " + std::to_string(i) + " is '" + header[i] + "', expected '" + EXPECTED_COLUMNS[i] + "' - not an icm20948 capture CSV");
+    }
+    if (legacyCapture && (header[39] != std::string("fifo_error_count") || header[40] != std::string("sensor_error_count")))
+        throw std::runtime_error(path + ": legacy capture has unexpected trailing diagnostic columns");
 
     std::vector<ReplayRow> rows;
     std::string line;
@@ -111,7 +121,7 @@ std::vector<ReplayRow> loadCsv(const std::string &path)
         if (line.empty())
             continue;
         std::vector<std::string> f2 = splitCsvLine(line);
-        if ((int)f2.size() != NUM_COLUMNS)
+        if ((int)f2.size() != NUM_COLUMNS && !(legacyCapture && (int)f2.size() == LEGACY_NUM_COLUMNS))
             throw std::runtime_error(path + ":" + std::to_string(lineNo) + ": expected " + std::to_string(NUM_COLUMNS) + " fields, got " + std::to_string(f2.size()));
 
         ReplayRow row;
@@ -349,7 +359,7 @@ void generateFixture(const std::string &scenario, const std::string &outPath, do
           << out.rawCompassHeadingDeg << "," << out.rawFusionHeadingDeg << "," << (out.headingValid ? out.headingDeg : -1.0) << ","
           << out.rotDegPerSec << ","
           << sourceName(out.headingSource) << "," << (int)out.headingQuality << "," << out.rejectionFlags << ","
-          << age << ",0,0\n";
+          << age << "," << age << ",0,0,0\n";
     }
     std::printf("wrote %d samples to %s (scenario=%s, duration=%.1fs, rate=%.1fHz)\n", n + 1, outPath.c_str(), scenario.c_str(), durationSec, rateHz);
 }

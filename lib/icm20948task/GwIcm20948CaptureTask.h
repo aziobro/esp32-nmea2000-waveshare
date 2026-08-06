@@ -81,8 +81,8 @@ private:
     volatile bool serialEnabled = false;
     volatile bool captureActive = false;
     volatile int rateHz = 10;
-    volatile int maxDurationSec = 60;
-    volatile int maxKB = 128;
+    volatile int maxDurationSec = 180;
+    volatile int maxKB = 512;
 
     unsigned long lastOfferMs = 0;
     unsigned long captureStartMs = 0;

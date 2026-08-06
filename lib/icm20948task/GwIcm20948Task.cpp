@@ -25,6 +25,7 @@
 #include "ImuDiagnostics.h"
 #include "GwIcm20948CaptureTask.h"
 #include "GwIcm20948CalControlTask.h"
+#include <math.h>
 
 /*
   Orchestration layer: reads config, drives the hardware adapter, and runs
@@ -147,11 +148,29 @@ class Icm20948WebData
     double fusionHeadingDeg = 0;
     bool fusionValid = false;
     MagDisturbanceState magState = MagDisturbanceState::Unknown;
+    String magSource = "agmt";
+    bool magValid = false;
     double magRawX = 0, magRawY = 0, magRawZ = 0;
+    double magAgmtRawX = 0, magAgmtRawY = 0, magAgmtRawZ = 0;
     double magBoatX = 0, magBoatY = 0, magBoatZ = 0;
     double magCorrX = 0, magCorrY = 0, magCorrZ = 0;
     bool headingHoldover = false;
     String headingHoldoverState = "lost";
+    int dmpSampleAgeMs = -1;
+    int dmpCompassAgeMs = -1;
+    uint32_t sensorErrorCount = 0;
+    uint32_t fifoErrorCount = 0;
+    uint32_t fifoDrainLimitCount = 0;
+    uint32_t fifoResetCount = 0;
+    uint32_t dmpReinitCount = 0;
+    uint32_t sensorReinitCount = 0;
+    uint32_t i2cRecoveryCount = 0;
+    uint32_t magRecoveryCount = 0;
+    uint32_t magNoDataCount = 0;
+    uint32_t magOverflowCount = 0;
+    uint32_t magZeroCount = 0;
+    uint32_t i2cRetryCount = 0;
+    String lastIcmStatus = "not started";
 
 public:
     Icm20948WebData() { lock = xSemaphoreCreateMutex(); }
@@ -217,18 +236,49 @@ public:
         headingHoldover = holdover;
         headingHoldoverState = headingHoldoverStateName(holdoverState);
     }
-    void setMagRaw(const Vec3 &raw, const Vec3 &boat, const Vec3 &corrected)
+    void setMagRaw(const Vec3 &raw, const Vec3 &agmtRaw, const Vec3 &boat, const Vec3 &corrected, const char *source, bool validMag)
     {
         GWSYNCHRONIZED(lock);
+        magSource = source ? source : "";
+        magValid = validMag;
         magRawX = raw.x;
         magRawY = raw.y;
         magRawZ = raw.z;
+        magAgmtRawX = agmtRaw.x;
+        magAgmtRawY = agmtRaw.y;
+        magAgmtRawZ = agmtRaw.z;
         magBoatX = boat.x;
         magBoatY = boat.y;
         magBoatZ = boat.z;
         magCorrX = corrected.x;
         magCorrY = corrected.y;
         magCorrZ = corrected.z;
+    }
+    void setCommunicationDiagnostics(int dmpAgeMs, int compassAgeMs, uint32_t sensorErrors,
+                                     uint32_t fifoErrors, uint32_t fifoDrainLimits,
+                                     uint32_t fifoResets, uint32_t dmpReinits,
+                                     uint32_t sensorReinits,
+                                     uint32_t i2cRecoveries, uint32_t magRecoveries,
+                                     uint32_t magNoData, uint32_t magOverflows,
+                                     uint32_t magZeroSamples, uint32_t i2cRetries,
+                                     const char *status)
+    {
+        GWSYNCHRONIZED(lock);
+        dmpSampleAgeMs = dmpAgeMs;
+        dmpCompassAgeMs = compassAgeMs;
+        sensorErrorCount = sensorErrors;
+        fifoErrorCount = fifoErrors;
+        fifoDrainLimitCount = fifoDrainLimits;
+        fifoResetCount = fifoResets;
+        dmpReinitCount = dmpReinits;
+        sensorReinitCount = sensorReinits;
+        i2cRecoveryCount = i2cRecoveries;
+        magRecoveryCount = magRecoveries;
+        magNoDataCount = magNoData;
+        magOverflowCount = magOverflows;
+        magZeroCount = magZeroSamples;
+        i2cRetryCount = i2cRetries;
+        lastIcmStatus = status ? status : "";
     }
     void toJson(GwJsonDocument &doc)
     {
@@ -262,12 +312,32 @@ public:
         doc["magRawX"] = magRawX;
         doc["magRawY"] = magRawY;
         doc["magRawZ"] = magRawZ;
+        doc["magSource"] = magSource;
+        doc["magValid"] = magValid;
+        doc["magAgmtRawX"] = magAgmtRawX;
+        doc["magAgmtRawY"] = magAgmtRawY;
+        doc["magAgmtRawZ"] = magAgmtRawZ;
         doc["magBoatX"] = magBoatX;
         doc["magBoatY"] = magBoatY;
         doc["magBoatZ"] = magBoatZ;
         doc["magCorrX"] = magCorrX;
         doc["magCorrY"] = magCorrY;
         doc["magCorrZ"] = magCorrZ;
+        doc["dmpSampleAgeMs"] = dmpSampleAgeMs;
+        doc["dmpCompassAgeMs"] = dmpCompassAgeMs;
+        doc["sensorErrorCount"] = sensorErrorCount;
+        doc["fifoErrorCount"] = fifoErrorCount;
+        doc["fifoDrainLimitCount"] = fifoDrainLimitCount;
+        doc["fifoResetCount"] = fifoResetCount;
+        doc["dmpReinitCount"] = dmpReinitCount;
+        doc["sensorReinitCount"] = sensorReinitCount;
+        doc["i2cRecoveryCount"] = i2cRecoveryCount;
+        doc["magRecoveryCount"] = magRecoveryCount;
+        doc["magNoDataCount"] = magNoDataCount;
+        doc["magOverflowCount"] = magOverflowCount;
+        doc["magZeroCount"] = magZeroCount;
+        doc["i2cRetryCount"] = i2cRetryCount;
+        doc["lastIcmStatus"] = lastIcmStatus;
     }
 };
 
@@ -288,6 +358,7 @@ class Icm20948PerfStats
     uint32_t totalLoopUs = 0, totalLoopMaxUs = 0;
     uint32_t missedDeadlines = 0;
     uint32_t fifoFramesDrained = 0, fifoOverflows = 0;
+    uint32_t sensorErrors = 0, fifoDrainLimits = 0, fifoResets = 0, dmpReinits = 0, sensorReinits = 0;
     uint32_t freeHeapBytes = 0, minFreeHeapEverBytes = 0;
     uint32_t stackHighWaterMarkBytes = 0;
 
@@ -297,6 +368,8 @@ public:
 
     void update(uint32_t sensorUs, uint32_t procUs, uint32_t fusUs, uint32_t logUs, uint32_t nmeaUs,
                 uint32_t totalUs, bool missedDeadline, uint32_t framesDrained, uint32_t overflows,
+                uint32_t drainLimits, uint32_t sensorErrorCount, uint32_t fifoResetCount, uint32_t dmpReinitCount,
+                uint32_t sensorReinitCount,
                 uint32_t freeHeap, uint32_t minFreeHeapEver, uint32_t stackHighWaterBytes)
     {
         GWSYNCHRONIZED(lock);
@@ -315,6 +388,11 @@ public:
         if (missedDeadline) missedDeadlines++;
         fifoFramesDrained = framesDrained;
         fifoOverflows = overflows;
+        fifoDrainLimits = drainLimits;
+        sensorErrors = sensorErrorCount;
+        fifoResets = fifoResetCount;
+        dmpReinits = dmpReinitCount;
+        sensorReinits = sensorReinitCount;
         freeHeapBytes = freeHeap;
         minFreeHeapEverBytes = minFreeHeapEver;
         stackHighWaterMarkBytes = stackHighWaterBytes;
@@ -338,6 +416,11 @@ public:
         doc["missedDeadlines"] = missedDeadlines;
         doc["fifoFramesDrained"] = fifoFramesDrained;
         doc["fifoOverflows"] = fifoOverflows;
+        doc["fifoDrainLimits"] = fifoDrainLimits;
+        doc["sensorErrors"] = sensorErrors;
+        doc["fifoResets"] = fifoResets;
+        doc["dmpReinits"] = dmpReinits;
+        doc["sensorReinits"] = sensorReinits;
         doc["freeHeapBytes"] = freeHeapBytes;
         doc["minFreeHeapEverBytes"] = minFreeHeapEverBytes;
         doc["stackHighWaterMarkBytes"] = stackHighWaterMarkBytes;
@@ -389,6 +472,47 @@ static Icm20948Capture capture;
 static std::atomic<unsigned long> g_icm20948LastHeartbeatMs{0};
 static std::atomic<bool> g_icm20948WatchdogArmed{false};
 static const unsigned long ICM20948_WATCHDOG_TIMEOUT_MS = 8000;
+static const unsigned long ICM20948_DMP_STALE_RECOVER_MS = 1200;
+static const unsigned long ICM20948_DMP_STALE_REINIT_MS = 3500;
+static const unsigned long ICM20948_DMP_COMPASS_STALE_MS = 1200;
+static const unsigned long ICM20948_DMP_RETRY_MS = 5000;
+static const unsigned long ICM20948_DMP_INIT_BACKOFF_MS = 60000;
+static const unsigned long ICM20948_SENSOR_STALE_RECOVER_MS = 1500;
+static const unsigned long ICM20948_SENSOR_REINIT_BACKOFF_MS = 1500;
+static const unsigned long ICM20948_SENSOR_REINIT_WINDOW_MS = 10000;
+static const unsigned long ICM20948_SENSOR_REINIT_SUPPRESS_MS = 60000;
+static const unsigned long ICM20948_MAG_BRIDGE_RECOVER_BACKOFF_MS = 1000;
+static const uint8_t ICM20948_DMP_FIFO_RESET_ERRORS = 3;
+static const uint8_t ICM20948_DMP_REINIT_ERRORS = 10;
+static const uint8_t ICM20948_DMP_INIT_BACKOFF_FAILURES = 3;
+static const uint8_t ICM20948_SENSOR_REINIT_WINDOW_LIMIT = 3;
+static const uint8_t ICM20948_MAG_BRIDGE_RECOVER_ERRORS = 5;
+static const double ICM20948_DMP_MAG_MIN_UT = 10.0;
+static const double ICM20948_DMP_MAG_MAX_UT = 120.0;
+static const double ICM20948_DMP_MAG_RAIL_UT = 76.8;
+static const double ICM20948_DMP_MAG_RAIL_TOLERANCE_UT = 0.08;
+
+static bool isNearAbs(double value, double target, double tolerance)
+{
+    return fabs(fabs(value) - target) <= tolerance;
+}
+
+static bool isPlausibleDmpCompassSample(const Vec3 &sample)
+{
+    if (!isfinite(sample.x) || !isfinite(sample.y) || !isfinite(sample.z))
+        return false;
+    double norm = sample.norm();
+    if (norm < ICM20948_DMP_MAG_MIN_UT || norm > ICM20948_DMP_MAG_MAX_UT)
+        return false;
+    // DMP compass occasionally reproduces the old 38.4uT-byte-step family as
+    // hard rails during fault windows; a real Earth-field component should not
+    // sit exactly at this rail.
+    if (isNearAbs(sample.x, ICM20948_DMP_MAG_RAIL_UT, ICM20948_DMP_MAG_RAIL_TOLERANCE_UT) ||
+        isNearAbs(sample.y, ICM20948_DMP_MAG_RAIL_UT, ICM20948_DMP_MAG_RAIL_TOLERANCE_UT) ||
+        isNearAbs(sample.z, ICM20948_DMP_MAG_RAIL_UT, ICM20948_DMP_MAG_RAIL_TOLERANCE_UT))
+        return false;
+    return true;
+}
 
 // A cheap "where in the loop was I last" marker, updated at each key step
 // below with a plain string-literal pointer assignment (no formatting, no
@@ -445,7 +569,7 @@ static void runIcm20948Task(GwApi *api)
     Icm20948WebData webData;
     api->registerRequestHandler("data", [&webData](AsyncWebServerRequest *request)
                                 {
-        GwJsonDocument doc(640);
+        GwJsonDocument doc(1152);
         webData.toJson(doc);
         String out;
         serializeJson(doc, out);
@@ -454,7 +578,7 @@ static void runIcm20948Task(GwApi *api)
     Icm20948PerfStats perfStats;
     api->registerRequestHandler("perfStatus", [&perfStats](AsyncWebServerRequest *request)
                                  {
-        GwJsonDocument doc(384);
+        GwJsonDocument doc(512);
         perfStats.toJson(doc);
         String out;
         serializeJson(doc, out);
@@ -466,11 +590,10 @@ static void runIcm20948Task(GwApi *api)
     capture.begin(api);
 
     GwIcm20948HardwareAdapter hw;
-    if (!hw.begin(logger, GWICM20948_SDA_PIN, GWICM20948_SCL_PIN))
+    while (!hw.begin(logger, GWICM20948_SDA_PIN, GWICM20948_SCL_PIN))
     {
-        LOG_DEBUG(GwLog::ERROR, "ICM20948 not found - task stopped");
-        vTaskDelete(NULL);
-        return;
+        LOG_DEBUG(GwLog::ERROR, "ICM20948 not found - retrying in 5s");
+        delay(5000);
     }
     LOG_DEBUG(GwLog::LOG, "ICM20948 found, starting attitude updates");
     GwConfigHandler *config = api->getConfig();
@@ -485,7 +608,39 @@ static void runIcm20948Task(GwApi *api)
 
     bool useDmp = true;
     config->getValue(useDmp, GwConfigDefinitions::icmUseDmp, true);
-    bool dmpOk = useDmp && hw.initDmp(logger);
+#if defined(GWICM20948_USE_WOLLEWALD)
+    if (useDmp)
+        LOG_DEBUG(GwLog::LOG, "ICM20948 Wollewald backend is raw-only; DMP disabled for driver bake-off");
+    useDmp = false;
+#endif
+    uint8_t consecutiveDmpInitFailures = 0;
+    unsigned long dmpInitSuppressedUntilMs = 0;
+    auto attemptDmpInit = [&](const char *reason) -> bool {
+        if (!useDmp)
+            return false;
+        unsigned long attemptNowMs = millis();
+        if (dmpInitSuppressedUntilMs != 0 && attemptNowMs < dmpInitSuppressedUntilMs)
+            return false;
+
+        bool ok = hw.initDmp(logger);
+        if (ok)
+        {
+            consecutiveDmpInitFailures = 0;
+            dmpInitSuppressedUntilMs = 0;
+            return true;
+        }
+
+        consecutiveDmpInitFailures++;
+        if (consecutiveDmpInitFailures >= ICM20948_DMP_INIT_BACKOFF_FAILURES)
+        {
+            dmpInitSuppressedUntilMs = attemptNowMs + ICM20948_DMP_INIT_BACKOFF_MS;
+            consecutiveDmpInitFailures = 0;
+            LOG_DEBUG(GwLog::ERROR, "ICM20948 DMP init suppressed for %lu ms after repeated failures at %s",
+                      ICM20948_DMP_INIT_BACKOFF_MS, reason);
+        }
+        return false;
+    };
+    bool dmpOk = attemptDmpInit("startup");
     webData.setDmpActive(dmpOk);
 
     int rateHz = 10;
@@ -510,6 +665,23 @@ static void runIcm20948Task(GwApi *api)
     // right semantics. See doc/IcmMagnetometerDmpConflict.md.
     bool haveDmpCompassSample = false;
     Vec3 lastDmpMagRaw;
+    unsigned long lastDmpCompassSampleMs = 0;
+    bool dmpCompassStaleLatched = false;
+
+    uint8_t consecutiveDmpFifoFaults = 0;
+    uint8_t consecutiveDmpCompassRejects = 0;
+    uint8_t consecutiveMagInvalid = 0;
+    uint32_t fifoResetCount = 0;
+    uint32_t dmpReinitCount = 0;
+    uint32_t sensorReinitCount = 0;
+    unsigned long lastDmpRecoveryMs = 0;
+    unsigned long noDataSinceMs = 0;
+    unsigned long agmtFailSinceMs = 0;
+    unsigned long lastSensorRecoveryMs = 0;
+    unsigned long sensorRecoveryWindowStartMs = 0;
+    unsigned long sensorRecoverySuppressedUntilMs = 0;
+    unsigned long lastMagBridgeRecoveryMs = 0;
+    uint8_t sensorRecoveryAttemptsInWindow = 0;
 
     // The actual heading/attitude pipeline (fusion filter, DMP validator,
     // source selector, mag disturbance monitor, heading filter, ROT
@@ -526,6 +698,72 @@ static void runIcm20948Task(GwApi *api)
     double lastHeadingRad = 0;
     bool haveLastHeading = false;
 
+    auto resetRuntimeSamples = [&]() {
+        haveDmpSample = false;
+        haveDmpCompassSample = false;
+        lastDmpSampleMs = 0;
+        lastDmpCompassSampleMs = 0;
+        dmpCompassStaleLatched = false;
+        consecutiveDmpFifoFaults = 0;
+        consecutiveDmpCompassRejects = 0;
+        consecutiveMagInvalid = 0;
+        lastCycleMs = millis();
+    };
+
+    auto updateCommunicationDiagnostics = [&](int dmpAgeMs, int dmpCompassAgeMs) {
+        webData.setCommunicationDiagnostics(
+            dmpAgeMs, dmpCompassAgeMs,
+            hw.sensorErrorCount(), hw.fifoErrorCount(), hw.fifoDrainLimitCount(),
+            fifoResetCount, dmpReinitCount, sensorReinitCount,
+            hw.i2cRecoveryCount(), hw.magRecoveryCount(), hw.magNoDataCount(),
+            hw.magOverflowCount(), hw.magZeroCount(), hw.i2cRetryCount(),
+            hw.lastStatusString());
+    };
+
+    auto recoverSensor = [&](const char *reason) -> bool {
+        unsigned long recoveryStartMs = millis();
+        if (sensorRecoverySuppressedUntilMs != 0 && recoveryStartMs < sensorRecoverySuppressedUntilMs)
+            return false;
+        if (recoveryStartMs - lastSensorRecoveryMs < ICM20948_SENSOR_REINIT_BACKOFF_MS)
+            return false;
+
+        if (sensorRecoveryWindowStartMs == 0 ||
+            recoveryStartMs - sensorRecoveryWindowStartMs > ICM20948_SENSOR_REINIT_WINDOW_MS)
+        {
+            sensorRecoveryWindowStartMs = recoveryStartMs;
+            sensorRecoveryAttemptsInWindow = 0;
+        }
+        sensorRecoveryAttemptsInWindow++;
+        if (sensorRecoveryAttemptsInWindow > ICM20948_SENSOR_REINIT_WINDOW_LIMIT)
+        {
+            sensorRecoverySuppressedUntilMs = recoveryStartMs + ICM20948_SENSOR_REINIT_SUPPRESS_MS;
+            sensorRecoveryAttemptsInWindow = 0;
+            sensorRecoveryWindowStartMs = recoveryStartMs;
+            LOG_DEBUG(GwLog::ERROR, "ICM20948 sensor reinitialize suppressed for %lu ms after repeated attempts at %s",
+                      ICM20948_SENSOR_REINIT_SUPPRESS_MS, reason);
+            return false;
+        }
+
+        lastSensorRecoveryMs = recoveryStartMs;
+        g_icm20948LastCheckpoint = reason;
+        g_icm20948LastHeartbeatMs = recoveryStartMs;
+        sensorReinitCount++;
+
+        bool ok = hw.reinitialize(logger, GWICM20948_SDA_PIN, GWICM20948_SCL_PIN);
+        if (ok)
+        {
+            hw.setFullScale(logger, accRangeIdx, gyrRangeIdx);
+            dmpOk = attemptDmpInit(reason);
+            webData.setDmpActive(dmpOk);
+            resetRuntimeSamples();
+            noDataSinceMs = 0;
+            agmtFailSinceMs = 0;
+        }
+        lastDmpRecoveryMs = millis();
+        g_icm20948LastHeartbeatMs = millis();
+        return ok;
+    };
+
     // Arm the watchdog only now - startup above (I2C scan, up to 6 sensor
     // init retries at 300ms each, DMP init) can legitimately take a few
     // seconds and shouldn't be mistaken for a hang.
@@ -537,25 +775,21 @@ static void runIcm20948Task(GwApi *api)
         g_icm20948LastCheckpoint = "before dataReady";
         delay(loopDelayMs);
         if (!hw.dataReady())
+        {
+            unsigned long staleNowMs = millis();
+            if (noDataSinceMs == 0)
+                noDataSinceMs = staleNowMs;
+            if (staleNowMs - noDataSinceMs > ICM20948_SENSOR_STALE_RECOVER_MS)
+                recoverSensor("recovering after stale dataReady");
+            updateCommunicationDiagnostics(
+                lastDmpSampleMs == 0 ? -1 : (int)(staleNowMs - lastDmpSampleMs),
+                lastDmpCompassSampleMs == 0 ? -1 : (int)(staleNowMs - lastDmpCompassSampleMs));
+            // dataReady() returned, so the task is alive even if the sensor is
+            // currently stale. Keep the watchdog reserved for calls that block.
+            g_icm20948LastHeartbeatMs = millis();
             continue;
-        // Real bug found live, 2026-08-06: this used to refresh the
-        // heartbeat unconditionally at the very top of the loop, before
-        // even checking dataReady(). That made the watchdog blind to
-        // exactly the failure mode it needed to catch most: dataReady()
-        // returning false forever (not hanging, just perpetually "no new
-        // data") lets the loop spin harmlessly through delay()+continue
-        // indefinitely, refreshing a heartbeat that looks perfectly fresh
-        // while roll/pitch/heading never update again - confirmed live via
-        // a real-time watchdog check log that sat at "checkpoint=before
-        // dataReady" with heartbeat age never exceeding ~100ms for 90+
-        // seconds straight during a real hang. The heartbeat now only
-        // advances on a cycle that actually got past dataReady(), so it
-        // reflects genuine progress - at the configured rate (up to
-        // 10Hz+) dataReady() should return true well within the 8s
-        // timeout under any normal operation, so this doesn't cost any
-        // real margin against the original hang scenario this watchdog
-        // was built for either.
-        g_icm20948LastHeartbeatMs = millis();
+        }
+        noDataSinceMs = 0;
         g_icm20948LastCheckpoint = "after dataReady, before readAGMT";
 
         unsigned long loopStartUs = micros();
@@ -563,7 +797,27 @@ static void runIcm20948Task(GwApi *api)
         unsigned long nmeaSendUs = 0;
 
         unsigned long sensorReadStartUs = micros();
-        hw.readAGMT();
+        if (!hw.readAGMT())
+        {
+            g_icm20948LastCheckpoint = "readAGMT failed";
+            unsigned long failNowMs = millis();
+            if (agmtFailSinceMs == 0)
+                agmtFailSinceMs = failNowMs;
+            if (failNowMs - agmtFailSinceMs > ICM20948_SENSOR_STALE_RECOVER_MS)
+                recoverSensor("recovering after readAGMT failures");
+            updateCommunicationDiagnostics(
+                lastDmpSampleMs == 0 ? -1 : (int)(failNowMs - lastDmpSampleMs),
+                lastDmpCompassSampleMs == 0 ? -1 : (int)(failNowMs - lastDmpCompassSampleMs));
+            // readAGMT() returned a failure status rather than hanging. That is
+            // a sensor fault, not a task stall, so do not let the watchdog turn
+            // the recovery backoff into a whole-device reset loop.
+            g_icm20948LastHeartbeatMs = millis();
+            continue;
+        }
+        agmtFailSinceMs = 0;
+        sensorRecoveryAttemptsInWindow = 0;
+        sensorRecoveryWindowStartMs = millis();
+        sensorRecoverySuppressedUntilMs = 0;
         g_icm20948LastCheckpoint = "after readAGMT";
 
         unsigned long nowMs = millis();
@@ -627,7 +881,11 @@ static void runIcm20948Task(GwApi *api)
         // computed directly from the raw accX/accY/accZ etc. ---
         Vec3 accelBoat = ImuCoordinateTransform::toBoatFrame(hw.readAccelG(), orientation);
         Vec3 gyroBoat = ImuCoordinateTransform::toBoatFrame(hw.readGyroDegPerSec(), orientation);
-        Vec3 magBoat = ImuCoordinateTransform::toBoatFrame(hw.readMagRaw(), orientation);
+        Vec3 agmtMagRaw = hw.readMagRaw();
+        Vec3 magRaw = agmtMagRaw;
+        const char *magSource = "agmt";
+        bool magValid = hw.magValid();
+        Vec3 magBoat = ImuCoordinateTransform::toBoatFrame(magRaw, orientation);
         sensorReadUs += micros() - sensorReadStartUs;
         webData.setAccel(accelBoat.x, accelBoat.y, accelBoat.z);
 
@@ -649,6 +907,31 @@ static void runIcm20948Task(GwApi *api)
                 lastDmpSampleMs = nowMs;
                 dmpFreshThisCycle = true;
             }
+            GwIcm20948HardwareAdapter::DmpReadResult dmpRead = hw.lastDmpReadResult();
+            if (dmpRead.fifoError || dmpRead.drainLimitHit)
+                consecutiveDmpFifoFaults++;
+            else if (dmpRead.haveQuaternion || dmpRead.fifoNoData)
+                consecutiveDmpFifoFaults = 0;
+
+            if ((dmpRead.drainLimitHit || consecutiveDmpFifoFaults == ICM20948_DMP_FIFO_RESET_ERRORS) &&
+                nowMs - lastDmpRecoveryMs > 500)
+            {
+                if (hw.resetFifo(logger))
+                    fifoResetCount++;
+                lastDmpRecoveryMs = nowMs;
+            }
+            if (consecutiveDmpFifoFaults >= ICM20948_DMP_REINIT_ERRORS)
+            {
+                dmpOk = attemptDmpInit("DMP FIFO fault recovery");
+                webData.setDmpActive(dmpOk);
+                haveDmpSample = false;
+                haveDmpCompassSample = false;
+                lastDmpSampleMs = 0;
+                lastDmpCompassSampleMs = 0;
+                consecutiveDmpFifoFaults = 0;
+                dmpReinitCount++;
+                lastDmpRecoveryMs = nowMs;
+            }
             g_icm20948LastCheckpoint = "before readDmpCompass";
             // Must run after readDmpQuaternion() above - see readDmpCompass()'s
             // doc comment (it reads back what that call just captured, it
@@ -656,13 +939,85 @@ static void runIcm20948Task(GwApi *api)
             Vec3 dmpMag;
             if (hw.readDmpCompass(dmpMag))
             {
-                lastDmpMagRaw = dmpMag;
-                haveDmpCompassSample = true;
+                if (isPlausibleDmpCompassSample(dmpMag))
+                {
+                    lastDmpMagRaw = dmpMag;
+                    haveDmpCompassSample = true;
+                    lastDmpCompassSampleMs = nowMs;
+                    dmpCompassStaleLatched = false;
+                    consecutiveDmpCompassRejects = 0;
+                }
+                else
+                {
+                    consecutiveDmpCompassRejects++;
+                    if (consecutiveDmpCompassRejects >= ICM20948_DMP_FIFO_RESET_ERRORS &&
+                        nowMs - lastDmpRecoveryMs > 500)
+                    {
+                        if (hw.resetFifo(logger))
+                            fifoResetCount++;
+                        lastDmpRecoveryMs = nowMs;
+                    }
+                    if (consecutiveDmpCompassRejects >= ICM20948_DMP_REINIT_ERRORS)
+                    {
+                        dmpOk = attemptDmpInit("DMP compass reject recovery");
+                        webData.setDmpActive(dmpOk);
+                        haveDmpSample = false;
+                        haveDmpCompassSample = false;
+                        lastDmpSampleMs = 0;
+                        lastDmpCompassSampleMs = 0;
+                        consecutiveDmpCompassRejects = 0;
+                        dmpReinitCount++;
+                        lastDmpRecoveryMs = nowMs;
+                    }
+                }
             }
             g_icm20948LastCheckpoint = "after DMP block";
         }
+        else if (useDmp && nowMs - lastDmpRecoveryMs > ICM20948_DMP_RETRY_MS)
+        {
+            dmpOk = attemptDmpInit("periodic DMP retry");
+            webData.setDmpActive(dmpOk);
+            if (dmpOk)
+                dmpReinitCount++;
+            lastDmpRecoveryMs = nowMs;
+        }
         sensorReadUs += micros() - dmpReadStartUs;
-        int dmpAgeMs = (int)(nowMs - lastDmpSampleMs);
+        int dmpAgeMs = lastDmpSampleMs == 0 ? -1 : (int)(nowMs - lastDmpSampleMs);
+        int dmpCompassAgeMs = lastDmpCompassSampleMs == 0 ? -1 : (int)(nowMs - lastDmpCompassSampleMs);
+        if (dmpOk && lastDmpSampleMs != 0 && (unsigned long)dmpAgeMs > ICM20948_DMP_STALE_RECOVER_MS &&
+            nowMs - lastDmpRecoveryMs > ICM20948_DMP_STALE_RECOVER_MS)
+        {
+            if ((unsigned long)dmpAgeMs > ICM20948_DMP_STALE_REINIT_MS)
+            {
+                dmpOk = attemptDmpInit("DMP stale recovery");
+                webData.setDmpActive(dmpOk);
+                haveDmpSample = false;
+                haveDmpCompassSample = false;
+                lastDmpSampleMs = 0;
+                lastDmpCompassSampleMs = 0;
+                dmpReinitCount++;
+            }
+            else if (hw.resetFifo(logger))
+            {
+                fifoResetCount++;
+            }
+            lastDmpRecoveryMs = nowMs;
+        }
+        if (dmpOk && haveDmpCompassSample && dmpCompassAgeMs >= 0 &&
+            (unsigned long)dmpCompassAgeMs > ICM20948_DMP_COMPASS_STALE_MS)
+        {
+            haveDmpCompassSample = false;
+            if (!dmpCompassStaleLatched)
+            {
+                dmpCompassStaleLatched = true;
+                consecutiveDmpFifoFaults++;
+            }
+        }
+
+        // Successful read cycle heartbeat. Failure paths above also refresh
+        // the heartbeat after the I2C call returns, so the watchdog only
+        // escalates genuine blocking stalls.
+        g_icm20948LastHeartbeatMs = millis();
 
         // The non-DMP raw-register magnetometer parse (readMagRaw(), used
         // for magBoat above) decodes garbage once DMP is active - DMP's own
@@ -678,7 +1033,38 @@ static void runIcm20948Task(GwApi *api)
         // and the CSV diagnostic capture see the corrected value too, not
         // just the heading pipeline.
         if (dmpOk && haveDmpCompassSample)
+        {
+            magRaw = lastDmpMagRaw;
+            magSource = "dmp_compass";
+            magValid = true;
             magBoat = ImuCoordinateTransform::toBoatFrame(lastDmpMagRaw, orientation);
+        }
+
+        if (!magValid)
+        {
+            if (consecutiveMagInvalid < 255)
+                consecutiveMagInvalid++;
+            if (consecutiveMagInvalid >= ICM20948_MAG_BRIDGE_RECOVER_ERRORS)
+            {
+                g_icm20948LastCheckpoint = "before magnetometer bridge recovery";
+                if (nowMs - lastMagBridgeRecoveryMs >= ICM20948_MAG_BRIDGE_RECOVER_BACKOFF_MS &&
+                    hw.recoverMagBridge())
+                {
+                    consecutiveMagInvalid = 0;
+                    lastMagBridgeRecoveryMs = millis();
+                    haveDmpCompassSample = false;
+                    lastDmpCompassSampleMs = 0;
+                    dmpCompassStaleLatched = false;
+                    LOG_DEBUG(GwLog::LOG, "ICM20948 magnetometer bridge recovered after %u invalid samples",
+                              ICM20948_MAG_BRIDGE_RECOVER_ERRORS);
+                }
+                g_icm20948LastHeartbeatMs = millis();
+            }
+        }
+        else
+        {
+            consecutiveMagInvalid = 0;
+        }
 
         // --- Calibration (moved ahead of Rate of Turn so gyro bias
         // correction applies before the gyro vector is used anywhere -
@@ -740,6 +1126,7 @@ static void runIcm20948Task(GwApi *api)
         cycleIn.accelBoat = accelBoat;
         cycleIn.gyroBoat = gyroBoat;
         cycleIn.magBoat = magBoat;
+        cycleIn.magValid = magValid;
         cycleIn.dmpOk = dmpOk;
         cycleIn.haveDmpSample = haveDmpSample;
         cycleIn.dmpFreshThisCycle = dmpFreshThisCycle;
@@ -751,7 +1138,7 @@ static void runIcm20948Task(GwApi *api)
         // instead of silently bypassing it (real bug, found bench-testing:
         // switching orientation had zero effect on DMP-mode roll/pitch).
         cycleIn.dmpQuat = ImuCoordinateTransform::rotateDmpQuaternion(lastDmpQuat, orientation);
-        cycleIn.dmpAgeMs = (unsigned long)dmpAgeMs;
+        cycleIn.dmpAgeMs = dmpAgeMs < 0 ? 0UL : (unsigned long)dmpAgeMs;
         cycleIn.dtSec = dtSec;
         cycleIn.nowMs = nowMs;
         cycleIn.taskStartMs = taskStartMs;
@@ -787,7 +1174,7 @@ static void runIcm20948Task(GwApi *api)
             nmeaSendUs += micros() - t0;
         }
 
-        webData.setMagRaw(hw.readMagRaw(), magBoat, cycleOut.magCorrected);
+        webData.setMagRaw(magRaw, agmtMagRaw, magBoat, cycleOut.magCorrected, magSource, magValid);
 
         if (cycleOut.attitudeValid)
         {
@@ -850,6 +1237,7 @@ static void runIcm20948Task(GwApi *api)
         webData.setDiagnostics(cycleOut.headingSource, cycleOut.headingQuality, cycleOut.rejectionFlags, cycleOut.magMagnitude,
                                 cycleOut.rawDmpHeadingDeg, cycleOut.dmpCandidateValid, cycleOut.rawCompassHeadingDeg, cycleOut.rawFusionHeadingDeg,
                                 cycleOut.fusionCandidateValid, cycleOut.magDisturbanceState, cycleOut.headingHoldover, cycleOut.headingHoldoverState);
+        updateCommunicationDiagnostics(dmpAgeMs, dmpCompassAgeMs);
 
         // --- Diagnostic CSV capture (Phase 2) - offerSample() is a
         // cheap, non-blocking queue push that no-ops entirely unless
@@ -862,7 +1250,7 @@ static void runIcm20948Task(GwApi *api)
             sample.sampleSequence = diagSampleSeq++;
             sample.accelRaw = hw.readAccelG();
             sample.gyroRaw = hw.readGyroDegPerSec();
-            sample.magRaw = hw.readMagRaw();
+            sample.magRaw = magRaw;
             sample.accelBoat = accelBoat;
             sample.gyroBoat = gyroBoat;
             sample.magBoat = magBoat;
@@ -883,8 +1271,10 @@ static void runIcm20948Task(GwApi *api)
             sample.headingQuality = cycleOut.headingQuality;
             sample.rejectionFlags = cycleOut.rejectionFlags;
             sample.dmpSampleAgeMs = dmpAgeMs;
+            sample.dmpCompassAgeMs = dmpCompassAgeMs;
             sample.fifoErrorCount = hw.fifoErrorCount();
-            sample.sensorErrorCount = 0; // no lower-level read-failure signal exposed by this hardware adapter/library yet
+            sample.fifoDrainLimitCount = hw.fifoDrainLimitCount();
+            sample.sensorErrorCount = hw.sensorErrorCount();
             capture.offerSample(sample);
         }
         unsigned long loggingEnqueueUs = micros() - loggingStartUs;
@@ -897,6 +1287,7 @@ static void runIcm20948Task(GwApi *api)
         bool missedDeadline = totalLoopUs > (loopDelayMs * 1000UL);
         perfStats.update(sensorReadUs, processingUs, (uint32_t)cycleOut.fusionDurationUs, loggingEnqueueUs, nmeaSendUs,
                           totalLoopUs, missedDeadline, hw.fifoFramesDrained(), hw.fifoErrorCount(),
+                          hw.fifoDrainLimitCount(), hw.sensorErrorCount(), fifoResetCount, dmpReinitCount, sensorReinitCount,
                           (uint32_t)xPortGetFreeHeapSize(), (uint32_t)xPortGetMinimumEverFreeHeapSize(),
                           (uint32_t)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
     }

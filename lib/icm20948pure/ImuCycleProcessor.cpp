@@ -9,6 +9,7 @@ namespace
 {
     double toDeg(double rad) { return rad * (180.0 / M_PI); }
     double toRad(double deg) { return deg * (M_PI / 180.0); }
+    constexpr double FUSION_COMPASS_MAX_DISAGREEMENT_DEG = 30.0;
 }
 
 ImuCycleOutput ImuCycleProcessor::process(const ImuCycleInput &in)
@@ -37,10 +38,11 @@ ImuCycleOutput ImuCycleProcessor::process(const ImuCycleInput &in)
     Vec3 magCal = ImuCalibrationOps::applyMag(in.magBoat, in.cal);
     double magMagnitude = magCal.norm();
     MagMonitorConfig magCfg;
-    magMonitor.update(magCal, magCfg);
+    if (in.magValid)
+        magMonitor.update(magCal, magCfg);
     out.magCorrected = magCal;
     out.magMagnitude = magMagnitude;
-    out.magDisturbanceState = magMonitor.state();
+    out.magDisturbanceState = in.magValid ? magMonitor.state() : MagDisturbanceState::Disturbed;
 
     // --- DMP euler. ---
     double dmpRollRad = 0, dmpPitchRad = 0, dmpYawRad = 0;
@@ -84,29 +86,41 @@ ImuCycleOutput ImuCycleProcessor::process(const ImuCycleInput &in)
     // --- Three candidate heading sources, all computed every cycle
     // regardless of mode - an independent software heading always runs,
     // even while DMP is active. ---
-    double rawCompassHeadingDeg = ImuAngleMath::wrap360(ImuCompass::rawHeadingDeg(magCal, toRad(rollDeg), toRad(pitchDeg)));
+    double rawCompassHeadingDeg = in.magValid ? ImuAngleMath::wrap360(ImuCompass::rawHeadingDeg(magCal, toRad(rollDeg), toRad(pitchDeg))) : 0.0;
 
     auto fusionStart = std::chrono::steady_clock::now();
-    fusion.update(Vec3(toRad(gyroCal.x), toRad(gyroCal.y), toRad(gyroCal.z)), in.accelBoat, magCal, in.dtSec);
+    fusion.update(Vec3(toRad(gyroCal.x), toRad(gyroCal.y), toRad(gyroCal.z)), in.accelBoat,
+                  in.magValid ? magCal : Vec3(0, 0, 0), in.dtSec);
     out.fusionDurationUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - fusionStart).count();
     double fr, fp, fy;
     ImuQuaternion::toEuler(fusion.quaternion(), fr, fp, fy);
     double rawFusionHeadingDeg = ImuAngleMath::wrap360(toDeg(fy));
-    bool fusionValid = (in.nowMs - in.taskStartMs) > 3000; // provisional settle time before trusting fusion's own convergence
+    bool fusionValid = in.magValid && (in.nowMs - in.taskStartMs) > 3000; // provisional settle time before trusting fusion's own convergence
+    if (fusionValid)
+    {
+        double fusionCompassDiff = fabs(ImuAngleMath::shortestDiff(rawCompassHeadingDeg, rawFusionHeadingDeg));
+        if (fusionCompassDiff > FUSION_COMPASS_MAX_DISAGREEMENT_DEG)
+            fusionValid = false;
+    }
 
     double rawDmpHeadingDeg = in.haveDmpSample ? ImuAngleMath::wrap360(toDeg(dmpYawRad)) : 0.0;
 
     DmpValidationConfig dmpCfg;
     uint32_t rejFlags = in.dmpOk ? dmpValidator.validate(in.dmpQuat, in.dmpFreshThisCycle, (double)in.dmpAgeMs,
-                                                           rawCompassHeadingDeg, true,
+                                                           rawCompassHeadingDeg, in.magValid,
                                                            (double)(in.nowMs - in.taskStartMs), in.dtSec, dmpCfg)
                                   : HR_SENSOR_READ_ERROR;
+    if (!in.magValid)
+        rejFlags |= HR_MAG_INVALID;
     if (magMonitor.state() == MagDisturbanceState::Disturbed)
         rejFlags |= HR_MAG_FIELD_CHANGE;
+    if (in.magValid && (in.nowMs - in.taskStartMs) > 3000 &&
+        fabs(ImuAngleMath::shortestDiff(rawCompassHeadingDeg, rawFusionHeadingDeg)) > FUSION_COMPASS_MAX_DISAGREEMENT_DEG)
+        rejFlags |= HR_FUSION_COMPASS_DISAGREE;
 
     SourceCandidate dmpCandidate(in.dmpOk && in.haveDmpSample && rejFlags == HR_NONE, rawDmpHeadingDeg,
                                   (rejFlags == HR_NONE) ? HeadingQuality::Good : HeadingQuality::Invalid);
-    SourceCandidate compassCandidate(true, rawCompassHeadingDeg,
+    SourceCandidate compassCandidate(in.magValid, rawCompassHeadingDeg,
                                       (magMonitor.state() == MagDisturbanceState::Disturbed) ? HeadingQuality::Poor : HeadingQuality::Good);
     SourceCandidate fusionCandidate(fusionValid, rawFusionHeadingDeg, HeadingQuality::Good);
 

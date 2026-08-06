@@ -19,7 +19,8 @@ namespace ImuDiagnostics
                "compass_heading_deg,fusion_heading_deg,output_heading_deg,"
                "rate_of_turn_deg_s,"
                "active_heading_source,heading_quality,rejection_flags,"
-               "dmp_sample_age_ms,fifo_error_count,sensor_error_count";
+               "dmp_sample_age_ms,dmp_compass_age_ms,"
+               "fifo_error_count,fifo_drain_limit_count,sensor_error_count";
     }
 
     const char *headingSourceCsvName(HeadingSource s)
@@ -67,7 +68,7 @@ namespace ImuDiagnostics
                           "%.2f,%.2f,%.2f,"
                           "%.2f,"
                           "%s,%s,%lu,"
-                          "%d,%lu,%lu",
+                          "%d,%d,%lu,%lu,%lu",
                           (unsigned long)s.timestampMs, (unsigned long)s.sampleSequence,
                           s.accelRaw.x, s.accelRaw.y, s.accelRaw.z,
                           s.gyroRaw.x, s.gyroRaw.y, s.gyroRaw.z,
@@ -82,7 +83,10 @@ namespace ImuDiagnostics
                           s.compassHeadingDeg, s.fusionHeadingDeg, s.outputHeadingDeg,
                           s.rateOfTurnDegPerSec,
                           headingSourceCsvName(s.activeSource), headingQualityCsvName(s.headingQuality), (unsigned long)s.rejectionFlags,
-                          s.dmpSampleAgeMs, (unsigned long)s.fifoErrorCount, (unsigned long)s.sensorErrorCount);
+                          s.dmpSampleAgeMs, s.dmpCompassAgeMs,
+                          (unsigned long)s.fifoErrorCount,
+                          (unsigned long)s.fifoDrainLimitCount,
+                          (unsigned long)s.sensorErrorCount);
         if (n < 0 || (size_t)n >= outCapacity)
             return -1;
         return n;

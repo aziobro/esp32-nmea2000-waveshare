@@ -149,6 +149,36 @@ void test_fusion_invalid_before_settle_time(void)
     TEST_ASSERT_FALSE(out.fusionCandidateValid);
 }
 
+void test_auto_falls_back_to_compass_when_fusion_disagrees(void)
+{
+    ImuCycleProcessor proc;
+    ImuCycleInput in = levelInput();
+    in.dmpOk = false;
+    in.magBoat = Vec3(0, 50, 0); // compass is far from fusion's identity-start yaw
+    ImuCycleOutput out = proc.process(in);
+
+    TEST_ASSERT_TRUE(out.headingValid);
+    TEST_ASSERT_FALSE(out.fusionCandidateValid);
+    TEST_ASSERT_TRUE((out.rejectionFlags & HR_FUSION_COMPASS_DISAGREE) != 0);
+    TEST_ASSERT_TRUE(out.headingSource == HeadingSource::SoftwareCompass);
+}
+
+void test_invalid_mag_rejects_all_mag_heading_sources(void)
+{
+    ImuCycleProcessor proc;
+    ImuCycleInput in = levelInput();
+    in.dmpOk = false;
+    in.magBoat = Vec3(0, 0, 0);
+    in.magValid = false;
+
+    ImuCycleOutput out = proc.process(in);
+
+    TEST_ASSERT_FALSE(out.headingValid);
+    TEST_ASSERT_FALSE(out.fusionCandidateValid);
+    TEST_ASSERT_TRUE((out.rejectionFlags & HR_MAG_INVALID) != 0);
+    TEST_ASSERT_TRUE(out.headingSource == HeadingSource::None);
+}
+
 void test_rot_filter_smooths_across_cycles(void)
 {
     ImuCycleProcessor proc;
@@ -287,6 +317,8 @@ int main(int argc, char **argv)
     RUN_TEST(test_heading_offset_and_invert_applied);
     RUN_TEST(test_deviation_table_applied_when_enabled);
     RUN_TEST(test_fusion_invalid_before_settle_time);
+    RUN_TEST(test_auto_falls_back_to_compass_when_fusion_disagrees);
+    RUN_TEST(test_invalid_mag_rejects_all_mag_heading_sources);
     RUN_TEST(test_rot_filter_smooths_across_cycles);
     RUN_TEST(test_mag_disturbance_state_reported);
     RUN_TEST(test_holdover_engages_when_pinned_dmp_source_is_lost);

@@ -84,6 +84,8 @@ enum HeadingRejectReason : uint32_t
     HR_SENSOR_READ_ERROR = 1u << 8,
     HR_FIFO_ERROR = 1u << 9,
     HR_SUDDEN_JUMP = 1u << 10,
+    HR_FUSION_COMPASS_DISAGREE = 1u << 11,
+    HR_MAG_INVALID = 1u << 12,
 };
 
 // The 24 valid right-angle mountings of a board with two horizontal

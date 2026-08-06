@@ -23,8 +23,8 @@ void test_header_and_row_have_same_column_count(void)
     int headerCommas = countCommas(ImuDiagnostics::csvHeader());
     int rowCommas = countCommas(buf);
     TEST_ASSERT_EQUAL_INT(headerCommas, rowCommas);
-    // 41 fields listed in the project spec -> 40 commas.
-    TEST_ASSERT_EQUAL_INT(40, headerCommas);
+    // 43 fields listed in the project spec -> 42 commas.
+    TEST_ASSERT_EQUAL_INT(42, headerCommas);
 }
 
 void test_row_contains_expected_values(void)

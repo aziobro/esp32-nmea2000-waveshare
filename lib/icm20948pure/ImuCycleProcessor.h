@@ -38,6 +38,7 @@ struct ImuCycleInput
     Vec3 accelBoat;
     Vec3 gyroBoat;
     Vec3 magBoat;
+    bool magValid = true;
 
     bool dmpOk = false;             // DMP hardware initialized/enabled at all
     bool haveDmpSample = false;     // a DMP quaternion has been read at least once since startup

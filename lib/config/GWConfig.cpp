@@ -105,6 +105,7 @@ bool GwConfigHandler::updateValue(String name, String value){
         prefs->putString(i->getName().c_str(),value);
         LOG_DEBUG(GwLog::LOG,"update config %s=>%s, freeEntries=%d",name.c_str(),i->isSecret()?"***":value.c_str(),(int)(prefs->freeEntries()));
         prefs->end();
+        i->value=value;
     }
     return true;
 }

@@ -33,6 +33,50 @@ from quality import assess_quality, has_blocking_issues
 from report import generate_data_quality_report, generate_plots
 
 
+def _fit_and_assess(points, reference_magnitude=None):
+    try:
+        fit_result = fit_ellipsoid(points, reference_magnitude=reference_magnitude)
+        return fit_result, None, assess_quality(points, fit_result, None)
+    except EllipsoidFitError as e:
+        return None, e, assess_quality(points, None, e)
+
+
+def _choose_auto_clean_window(data, reference_magnitude=None, min_samples=200, step_sec=5.0, min_duration_sec=30.0):
+    timestamps = data["timestamp_ms"]
+    t = (timestamps - timestamps[0]) / 1000.0
+    end_time = float(t[-1])
+    candidates = []
+
+    starts = np.arange(0.0, max(0.0, end_time - min_duration_sec) + 0.001, step_sec)
+    for start in starts:
+        ends = np.arange(start + min_duration_sec, end_time + 0.001, step_sec)
+        if len(ends) == 0 or ends[-1] < end_time:
+            ends = np.append(ends, end_time)
+        for end in ends:
+            mask = (t >= start) & (t <= end)
+            if int(mask.sum()) < min_samples:
+                continue
+            points = data.mag_boat[mask]
+            fit_result, fit_error, issues = _fit_and_assess(points, reference_magnitude)
+            if fit_result is None or issues:
+                continue
+            rms = float(np.sqrt(np.mean(fit_result.residuals ** 2)))
+            residual_ratio = rms / fit_result.reference_magnitude
+            candidates.append((residual_ratio, -int(mask.sum()), start, end, mask, fit_result, issues))
+
+    if not candidates:
+        return data, None
+
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    _, _, start, end, mask, _, _ = candidates[0]
+    return data.subset(mask), {
+        "start": start,
+        "end": end,
+        "kept": int(mask.sum()),
+        "total": data.row_count,
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fit an icm20948 magnetometer calibration from a runtime CSV capture.")
     parser.add_argument("capture_csv", help="Path to a CSV capture from the firmware's runtime logger.")
@@ -41,6 +85,8 @@ def main(argv=None) -> int:
     parser.add_argument("--report-dir", help="Directory to write the report and plots into (default: alongside --output, or ./<capture-basename>_report/ in analysis-only mode).")
     parser.add_argument("--no-plots", action="store_true", help="Skip plot generation even if matplotlib is available.")
     parser.add_argument("--robust", action="store_true", help="Iteratively reject >3-sigma outliers before the final fit (see ellipsoid_fit.reject_outliers). Never on by default - silent rejection can hide a genuinely bad capture.")
+    parser.add_argument("--auto-clean", action="store_true",
+                        help="Scan for the best stable contiguous window that passes quality gates before fitting. Useful when a long tumble includes a fault or magnetic-environment change.")
     parser.add_argument("--orientation", type=int, default=0, help="MountOrientation enum value (0-23) to record in the output JSON (default 0 = Forward). Matches lib/icm20948pure/ImuTypes.h.")
     parser.add_argument("--force", action="store_true", help="Write --output even if quality gates failed. Prints a loud warning; use only if you understand and accept the reported issues.")
     parser.add_argument("--reference-magnitude", type=float, default=None,
@@ -58,6 +104,13 @@ def main(argv=None) -> int:
     except CalibrationDataError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+    auto_clean_note = None
+    original_row_count = data.row_count
+    if args.auto_clean:
+        data, auto_clean_note = _choose_auto_clean_window(data, args.reference_magnitude)
+        if auto_clean_note is None:
+            print("warning: --auto-clean found no passing stable window; fitting the full capture", file=sys.stderr)
 
     points = data.mag_boat
     dropped = 0
@@ -96,6 +149,11 @@ def main(argv=None) -> int:
     plot_paths = [] if args.no_plots else generate_plots(data, fit_result, report_dir)
     plots_skipped_reason = "--no-plots given - plots skipped." if args.no_plots else None
     report_text = generate_data_quality_report(data, fit_result, issues, plot_paths, args.capture_csv, plots_skipped_reason)
+    if auto_clean_note is not None:
+        report_text += (
+            f"\n--auto-clean selected {auto_clean_note['kept']}/{original_row_count} samples "
+            f"from {auto_clean_note['start']:.1f}s to {auto_clean_note['end']:.1f}s before fitting.\n"
+        )
     if args.robust:
         report_text += f"\n--robust outlier rejection dropped {dropped}/{points.shape[0]} samples before the reported fit.\n"
     report_path = os.path.join(report_dir, "report.md")

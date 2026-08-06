@@ -1,4 +1,4 @@
-"""Loads the 41-column runtime diagnostic CSV produced by the firmware's
+"""Loads the runtime diagnostic CSV produced by the firmware's
 Icm20948Capture (see lib/icm20948pure/ImuDiagnostics.cpp for the
 authoritative column list and lib/icm20948task/GwIcm20948CaptureTask.cpp
 for how it's captured on-device).
@@ -31,7 +31,13 @@ EXPECTED_COLUMNS = [
     "compass_heading_deg", "fusion_heading_deg", "output_heading_deg",
     "rate_of_turn_deg_s",
     "active_heading_source", "heading_quality", "rejection_flags",
-    "dmp_sample_age_ms", "fifo_error_count", "sensor_error_count",
+    "dmp_sample_age_ms", "dmp_compass_age_ms",
+    "fifo_error_count", "fifo_drain_limit_count", "sensor_error_count",
+]
+
+LEGACY_COLUMNS = [
+    c for c in EXPECTED_COLUMNS
+    if c not in {"dmp_compass_age_ms", "fifo_drain_limit_count"}
 ]
 
 _STRING_COLUMNS = {"active_heading_source", "heading_quality"}
@@ -51,6 +57,17 @@ class CaptureData:
     def __getitem__(self, name: str):
         return self.columns[name]
 
+    def subset(self, mask: np.ndarray) -> "CaptureData":
+        if mask.shape[0] != self.row_count:
+            raise ValueError("subset mask length does not match row count")
+        columns = {}
+        for name, values in self.columns.items():
+            if name in _STRING_COLUMNS:
+                columns[name] = [v for v, keep in zip(values, mask) if keep]
+            else:
+                columns[name] = values[mask]
+        return CaptureData(columns=columns, row_count=int(np.sum(mask)))
+
     @property
     def mag_boat(self) -> np.ndarray:
         """Nx3 array: magnetometer samples in boat frame, BEFORE bias/matrix
@@ -65,6 +82,9 @@ class CaptureData:
 
     @property
     def mag_raw(self) -> np.ndarray:
+        """Nx3 array: effective pre-user-calibration magnetometer source.
+        New DMP captures use the DMP compass field here; non-DMP and legacy
+        captures use the AGMT register decode."""
         return np.column_stack([self.columns["mag_raw_x"], self.columns["mag_raw_y"], self.columns["mag_raw_z"]])
 
 
@@ -77,7 +97,8 @@ def load_csv(path: str) -> CaptureData:
             raise CalibrationDataError(f"{path}: file is empty")
 
         header = [h.strip() for h in header]
-        if header != EXPECTED_COLUMNS:
+        legacy = header == LEGACY_COLUMNS
+        if header != EXPECTED_COLUMNS and not legacy:
             missing = [c for c in EXPECTED_COLUMNS if c not in header]
             extra = [c for c in header if c not in EXPECTED_COLUMNS]
             detail = []
@@ -91,6 +112,9 @@ def load_csv(path: str) -> CaptureData:
 
         raw_rows: List[List[str]] = []
         for line_no, row in enumerate(reader, start=2):
+            if legacy and len(row) == len(LEGACY_COLUMNS):
+                dmp_age = row[LEGACY_COLUMNS.index("dmp_sample_age_ms")]
+                row = row[:39] + [dmp_age, row[39], "0", row[40]]
             if len(row) != len(EXPECTED_COLUMNS):
                 raise CalibrationDataError(
                     f"{path}:{line_no}: expected {len(EXPECTED_COLUMNS)} fields, got {len(row)} (corrupt or truncated capture)"

@@ -18,6 +18,9 @@ struct DiagnosticSample
     uint32_t timestampMs = 0;
     uint32_t sampleSequence = 0;
 
+    // magRaw is the effective pre-user-calibration magnetometer source
+    // feeding the pipeline. With DMP active, this is the DMP compass field;
+    // otherwise it is the plain AGMT register decode.
     Vec3 accelRaw, gyroRaw, magRaw;
     Vec3 accelBoat, gyroBoat, magBoat;
     Vec3 magCorrected;
@@ -36,7 +39,9 @@ struct DiagnosticSample
     uint32_t rejectionFlags = 0;
 
     int dmpSampleAgeMs = 0;
+    int dmpCompassAgeMs = 0;
     uint32_t fifoErrorCount = 0;
+    uint32_t fifoDrainLimitCount = 0;
     uint32_t sensorErrorCount = 0;
 };
 
@@ -49,7 +54,8 @@ namespace ImuDiagnostics
     // dmp_roll_deg,dmp_pitch_deg,dmp_heading_deg,compass_heading_deg,
     // fusion_heading_deg,output_heading_deg,rate_of_turn_deg_s,
     // active_heading_source,heading_quality,rejection_flags,
-    // dmp_sample_age_ms,fifo_error_count,sensor_error_count
+    // dmp_sample_age_ms,dmp_compass_age_ms,fifo_error_count,
+    // fifo_drain_limit_count,sensor_error_count
     const char *csvHeader();
 
     // Formats one CSV row (no trailing newline) into a caller-supplied

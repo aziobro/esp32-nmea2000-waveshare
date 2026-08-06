@@ -71,7 +71,8 @@ private:
     // Serializes cal/deviationTable/deviationEnabled (with the CURRENT
     // icmOrientation) and persists to icmCalJson (setValue + updateValue,
     // see class comment).
-    void persistCalibration(const ImuCalibration &cal, const DeviationTable &deviationTable, bool deviationEnabled);
+    void persistCalibration(const ImuCalibration &cal, MountOrientation orientation,
+                            const DeviationTable &deviationTable, bool deviationEnabled);
 
     void handleCalControl(AsyncWebServerRequest *request);
     void handleGyroCalControl(AsyncWebServerRequest *request);

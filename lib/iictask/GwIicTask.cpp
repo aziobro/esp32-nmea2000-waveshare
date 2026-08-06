@@ -132,7 +132,7 @@ bool initWireDo(GwLog *logger, TwoWire &wire, int num, const String &dummy, int 
                   num, sda, scl);
         return false;
     }
-    bool rt = Wire.begin(sda, scl);
+    bool rt = wire.begin(sda, scl);
     if (!rt)
     {
         LOG_DEBUG(GwLog::ERROR, "unable to initialize IIC %d at sad=%d,scl=%d",
