@@ -23,8 +23,8 @@ void test_header_and_row_have_same_column_count(void)
     int headerCommas = countCommas(ImuDiagnostics::csvHeader());
     int rowCommas = countCommas(buf);
     TEST_ASSERT_EQUAL_INT(headerCommas, rowCommas);
-    // 43 fields listed in the project spec -> 42 commas.
-    TEST_ASSERT_EQUAL_INT(42, headerCommas);
+    // 32 fields listed in the project spec -> 31 commas.
+    TEST_ASSERT_EQUAL_INT(31, headerCommas);
 }
 
 void test_row_contains_expected_values(void)
@@ -54,23 +54,11 @@ void test_truncation_detected_with_small_buffer(void)
     TEST_ASSERT_EQUAL_INT(-1, n);
 }
 
-void test_default_sample_has_no_dmp_quaternion_garbage(void)
-{
-    // A default-constructed sample's quaternion should be the identity
-    // (w=1, x=y=z=0), not zero-initialized (which wouldn't be a valid
-    // rotation) - guards against a lazy struct default silently
-    // producing bad data before the first real DMP sample arrives.
-    DiagnosticSample s;
-    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 1.0, s.dmpQ0);
-    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, s.dmpQ1);
-}
-
 int main(int argc, char **argv)
 {
     UNITY_BEGIN();
     RUN_TEST(test_header_and_row_have_same_column_count);
     RUN_TEST(test_row_contains_expected_values);
     RUN_TEST(test_truncation_detected_with_small_buffer);
-    RUN_TEST(test_default_sample_has_no_dmp_quaternion_garbage);
     return UNITY_END();
 }

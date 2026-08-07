@@ -1,5 +1,4 @@
 #include "ImuSimulator.h"
-#include "ImuQuaternion.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -74,13 +73,6 @@ namespace ImuSimulator
                 clean.z * state.magSoftIronScale[2] + state.magHardIronBias[2] + pseudoNoise(state.magNoise, 6.6));
         }
 
-        double dmpHeadingDeg = state.headingDeg + state.dmpYawDisagreementDeg;
-        s.dmpQuat = ImuQuaternion::fromEuler(rollRad, pitchRad, dmpHeadingDeg * (M_PI / 180.0));
-        if (state.dmpBadNorm)
-        {
-            s.dmpQuat.w *= 3.0; // corrupt the norm well outside any reasonable tolerance
-        }
-        s.dmpValid = state.dmpValid;
         return s;
     }
 
@@ -159,14 +151,6 @@ namespace ImuSimulator
             return s;
         }
 
-        SimulatorState dmpHeadingDisagreement(double timeSec, double disagreementDeg)
-        {
-            SimulatorState s;
-            s.headingDeg = 120.0;
-            s.dmpYawDisagreementDeg = disagreementDeg;
-            return s;
-        }
-
         SimulatorState headingWrapThroughNorth(double timeSec, double periodSec)
         {
             SimulatorState s;
@@ -176,22 +160,6 @@ namespace ImuSimulator
             if (frac < 0)
                 frac += 1.0;
             s.headingDeg = fmod(350.0 + frac * 20.0, 360.0);
-            return s;
-        }
-
-        SimulatorState staleDmpOutput(double timeSec, double staleStartSec)
-        {
-            SimulatorState s;
-            s.headingDeg = 200.0;
-            s.dmpValid = (timeSec < staleStartSec);
-            return s;
-        }
-
-        SimulatorState quaternionNormError(double timeSec, double errorStartSec)
-        {
-            SimulatorState s;
-            s.headingDeg = 200.0;
-            s.dmpBadNorm = (timeSec >= errorStartSec);
             return s;
         }
 

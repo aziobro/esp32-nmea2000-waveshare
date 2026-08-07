@@ -1,96 +1,23 @@
 #include "ImuHeadingSource.h"
-#include "ImuQuaternion.h"
 #include "ImuAngleMath.h"
-#include <math.h>
-
-void DmpValidator::reset()
-{
-    consecutiveValid = 0;
-    havePrevHeading = false;
-    prevHeadingDeg = 0;
-}
-
-uint32_t DmpValidator::validate(const Quaternion &q, bool sampleFresh, double ageMs,
-                                 double compassHeadingDeg, bool compassValid,
-                                 double elapsedSinceInitMs, double dtSec,
-                                 const DmpValidationConfig &cfg)
-{
-    uint32_t flags = HR_NONE;
-
-    if (elapsedSinceInitMs < cfg.startupConvergenceMs)
-        flags |= HR_INITIALIZING;
-
-    if (!sampleFresh && ageMs > cfg.maxSampleAgeMs)
-        flags |= HR_DMP_STALE;
-
-    if (!ImuQuaternion::isValidUnit(q, cfg.quaternionNormTolerance))
-        flags |= HR_BAD_QUATERNION;
-
-    double r, p, y;
-    double headingDeg = 0;
-    bool haveHeading = false;
-    if ((flags & HR_BAD_QUATERNION) == 0)
-    {
-        ImuQuaternion::toEuler(q, r, p, y);
-        headingDeg = ImuAngleMath::wrap360(y * (180.0 / M_PI));
-        haveHeading = true;
-
-        if (compassValid)
-        {
-            double diff = fabs(ImuAngleMath::shortestDiff(compassHeadingDeg, headingDeg));
-            if (diff > cfg.maxDisagreementWithCompassDeg)
-                flags |= HR_DMP_COMPASS_DISAGREE;
-        }
-
-        if (havePrevHeading && dtSec > 1e-6)
-        {
-            double rate = fabs(ImuAngleMath::shortestDiff(prevHeadingDeg, headingDeg)) / dtSec;
-            if (rate > cfg.maxJumpDegPerSec)
-                flags |= HR_SUDDEN_JUMP;
-        }
-    }
-
-    if (flags == HR_NONE)
-        consecutiveValid++;
-    else
-        consecutiveValid = 0;
-
-    // Not enough consecutive good samples yet is treated the same as
-    // still-initializing - both mean "not yet trustworthy", and the
-    // reject-reason enum doesn't have a separate bit for it (see header).
-    if (consecutiveValid < cfg.minConsecutiveValidSamples)
-        flags |= HR_INITIALIZING;
-
-    if (haveHeading)
-    {
-        prevHeadingDeg = headingDeg;
-        havePrevHeading = true;
-    }
-
-    return flags;
-}
 
 // --- Source selection ---
 
-HeadingSource HeadingSourceSelector::pickAuto(const SourceCandidate &fusion, const SourceCandidate &dmp, const SourceCandidate &compass)
+HeadingSource HeadingSourceSelector::pickAuto(const SourceCandidate &fusion, const SourceCandidate &compass)
 {
     if (fusion.valid)
         return HeadingSource::SoftwareFusion;
-    if (dmp.valid)
-        return HeadingSource::Dmp;
     if (compass.valid)
         return HeadingSource::SoftwareCompass;
     return HeadingSource::None;
 }
 
-const SourceCandidate &HeadingSourceSelector::candidateFor(HeadingSource s, const SourceCandidate &fusion, const SourceCandidate &dmp, const SourceCandidate &compass)
+const SourceCandidate &HeadingSourceSelector::candidateFor(HeadingSource s, const SourceCandidate &fusion, const SourceCandidate &compass)
 {
     switch (s)
     {
     case HeadingSource::SoftwareFusion:
         return fusion;
-    case HeadingSource::Dmp:
-        return dmp;
     case HeadingSource::SoftwareCompass:
         return compass;
     default:
@@ -100,7 +27,7 @@ const SourceCandidate &HeadingSourceSelector::candidateFor(HeadingSource s, cons
 
 HeadingSourceSelector::Result HeadingSourceSelector::update(
     HeadingSourceMode mode,
-    const SourceCandidate &fusion, const SourceCandidate &dmp, const SourceCandidate &compass,
+    const SourceCandidate &fusion, const SourceCandidate &compass,
     uint32_t nowMs, uint32_t transitionDurationMs)
 {
     Result result;
@@ -108,9 +35,6 @@ HeadingSourceSelector::Result HeadingSourceSelector::update(
     HeadingSource desired;
     switch (mode)
     {
-    case HeadingSourceMode::Dmp:
-        desired = dmp.valid ? HeadingSource::Dmp : HeadingSource::None;
-        break;
     case HeadingSourceMode::SoftwareCompass:
         desired = compass.valid ? HeadingSource::SoftwareCompass : HeadingSource::None;
         break;
@@ -120,7 +44,7 @@ HeadingSourceSelector::Result HeadingSourceSelector::update(
     case HeadingSourceMode::DiagnosticOnly:
     case HeadingSourceMode::Auto:
     default:
-        desired = pickAuto(fusion, dmp, compass);
+        desired = pickAuto(fusion, compass);
         break;
     }
 
@@ -143,7 +67,7 @@ HeadingSourceSelector::Result HeadingSourceSelector::update(
         return result;
     }
 
-    const SourceCandidate &desiredCandidate = candidateFor(desired, fusion, dmp, compass);
+    const SourceCandidate &desiredCandidate = candidateFor(desired, fusion, compass);
 
     if (activeSource == HeadingSource::None)
     {

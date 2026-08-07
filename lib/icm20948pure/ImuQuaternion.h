@@ -20,13 +20,12 @@ namespace ImuQuaternion
     // (near) zero.
     Quaternion normalize(const Quaternion &q);
 
-    // True if w/x/y/z are all finite (not NaN/Inf) - the first check any
-    // DMP sample should go through before anything else touches it.
+    // True if w/x/y/z are all finite (not NaN/Inf).
     bool isFinite(const Quaternion &q);
 
     // True if isFinite AND the norm is within tolerance of 1.0 - a unit
     // quaternion is a valid rotation, one that isn't (badly out of range)
-    // usually means corrupted FIFO data.
+    // usually means corrupted fusion input/state.
     bool isValidUnit(const Quaternion &q, double tolerance = 0.05);
 
     void toEuler(const Quaternion &q, double &rollRad, double &pitchRad, double &yawRad);
@@ -41,8 +40,6 @@ namespace ImuQuaternion
     Quaternion conjugate(const Quaternion &q);
 
     // Shortest angular difference between two quaternions' yaw components
-    // alone (degrees) - used to compare DMP heading against the software
-    // compass/fusion heading without needing a full quaternion distance
-    // metric.
+    // alone (degrees), without needing a full quaternion distance metric.
     double yawDifferenceDeg(const Quaternion &a, const Quaternion &b);
 }

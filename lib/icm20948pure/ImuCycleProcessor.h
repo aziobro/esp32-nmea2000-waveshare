@@ -28,8 +28,8 @@
   One instance's lifetime should match one task's lifetime (real or
   replay) - it owns the same persistent, cycle-to-cycle state the
   original inline code carried as function-local statics (fusion filter,
-  DMP validator, source selector, mag disturbance monitor, heading
-  filter, heading unwrap accumulator, ROT low-pass state).
+  source selector, mag disturbance monitor, heading filter, heading unwrap
+  accumulator, ROT low-pass state).
 */
 
 struct ImuCycleInput
@@ -40,21 +40,15 @@ struct ImuCycleInput
     Vec3 magBoat;
     bool magValid = true;
 
-    bool dmpOk = false;             // DMP hardware initialized/enabled at all
-    bool haveDmpSample = false;     // a DMP quaternion has been read at least once since startup
-    bool dmpFreshThisCycle = false; // a NEW DMP quaternion was read THIS cycle
-    Quaternion dmpQuat;             // last known DMP quaternion - meaningful iff haveDmpSample
-    unsigned long dmpAgeMs = 0;     // ms since the last fresh DMP sample
-
     double dtSec = 0;
     unsigned long nowMs = 0;
-    unsigned long taskStartMs = 0; // for fusion settle-time and DMP validator uptime gating
+    unsigned long taskStartMs = 0; // for fusion settle-time gating
 
     ImuCalibration cal;
     DeviationTable deviationTable;
     bool deviationEnabled = false;
 
-    HeadingSourceMode headingMode = HeadingSourceMode::Dmp;
+    HeadingSourceMode headingMode = HeadingSourceMode::Auto;
     uint32_t transitionMs = 1000;
 
     bool rollInvert = false, pitchInvert = false;
@@ -108,9 +102,6 @@ struct ImuCycleOutput
     double magMagnitude = 0;
     MagDisturbanceState magDisturbanceState = MagDisturbanceState::Unknown;
 
-    double dmpRollDeg = 0, dmpPitchDeg = 0;
-    double rawDmpHeadingDeg = 0;
-    bool dmpCandidateValid = false;
     double rawCompassHeadingDeg = 0;
     double rawFusionHeadingDeg = 0;
     bool fusionCandidateValid = false;
@@ -130,7 +121,6 @@ public:
 
 private:
     MahonyFusion fusion;
-    DmpValidator dmpValidator;
     HeadingSourceSelector sourceSelector;
     MagMonitor magMonitor;
     HeadingFilter headingFilter;

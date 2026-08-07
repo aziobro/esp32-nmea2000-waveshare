@@ -16,7 +16,7 @@ static void assertVecEqual(const Vec3 &expected, const Vec3 &actual, double tol 
 
 // v' = q * v * conj(q), treating v as a pure (w=0) quaternion - the
 // standard quaternion sandwich rotation, matching the convention toEuler/
-// fromEuler and quaternionFor/rotateDmpQuaternion all share.
+// fromEuler and quaternionFor all share.
 static Vec3 rotateVectorByQuaternion(const Quaternion &q, const Vec3 &v)
 {
     Quaternion vq;
@@ -174,59 +174,6 @@ void test_quaternionFor_forward_is_identity(void)
     TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, q.z);
 }
 
-// Forward is the identity transform and must reproduce the pre-fix
-// behavior exactly - a currently-deployed unit using the default
-// orientation must see zero change from this fix.
-void test_rotateDmpQuaternion_forward_is_noop(void)
-{
-    Quaternion dmp = ImuQuaternion::fromEuler(0.3, -0.2, 1.1); // arbitrary non-trivial attitude
-    Quaternion out = ImuCoordinateTransform::rotateDmpQuaternion(dmp, MountOrientation::Forward);
-    TEST_ASSERT_DOUBLE_WITHIN(1e-9, dmp.w, out.w);
-    TEST_ASSERT_DOUBLE_WITHIN(1e-9, dmp.x, out.x);
-    TEST_ASSERT_DOUBLE_WITHIN(1e-9, dmp.y, out.y);
-    TEST_ASSERT_DOUBLE_WITHIN(1e-9, dmp.z, out.z);
-}
-
-// The defining property, tested end-to-end rather than by re-deriving the
-// same algebra: dmpQuat maps a SENSOR-frame vector to its WORLD-frame
-// representation (v_world = dmp * v_sensor); rotateDmpQuaternion's result
-// must map the corresponding BOAT-frame vector to that exact same
-// WORLD-frame vector. Framed as an inverse problem (given an arbitrary
-// world vector, recover the body-frame vector two independent ways) so it
-// never needs to convert a world-frame quantity through matrixFor, which
-// only relates SENSOR and BOAT frames to each other, not to world frame -
-// an earlier version of this test made exactly that mistake and produced
-// a false failure. If the multiply/conjugate order in rotateDmpQuaternion
-// were wrong, this would fail for any non-Forward orientation - it would
-// NOT coincidentally pass, unlike a test that just re-checks the same
-// formula.
-void test_rotateDmpQuaternion_consistent_with_matrix_for_all_24_orientations(void)
-{
-    Quaternion dmp = ImuQuaternion::fromEuler(0.25, 0.4, -0.6); // arbitrary non-trivial attitude
-    Vec3 vWorld(0.4, -0.6, 0.8); // arbitrary, no zero components
-    for (int i = 0; i < 24; i++)
-    {
-        MountOrientation o = static_cast<MountOrientation>(i);
-        Mat3 m = ImuCoordinateTransform::matrixFor(o);
-        Quaternion boatQuat = ImuCoordinateTransform::rotateDmpQuaternion(dmp, o);
-
-        // Path 1: recover the sensor-frame vector via dmp's inverse, then
-        // convert sensor->boat with the orientation matrix directly.
-        Vec3 vSensor = rotateVectorByQuaternion(ImuQuaternion::conjugate(dmp), vWorld);
-        Vec3 expectedBoat = m.apply(vSensor);
-
-        // Path 2: recover the boat-frame vector directly via boatQuat's
-        // inverse - no matrixFor involved at all.
-        Vec3 actualBoat = rotateVectorByQuaternion(ImuQuaternion::conjugate(boatQuat), vWorld);
-
-        char msg[96];
-        snprintf(msg, sizeof(msg), "orientation index %d: boat-frame quaternion disagrees with sensor-frame + matrix path", i);
-        TEST_ASSERT_DOUBLE_WITHIN_MESSAGE(1e-9, expectedBoat.x, actualBoat.x, msg);
-        TEST_ASSERT_DOUBLE_WITHIN_MESSAGE(1e-9, expectedBoat.y, actualBoat.y, msg);
-        TEST_ASSERT_DOUBLE_WITHIN_MESSAGE(1e-9, expectedBoat.z, actualBoat.z, msg);
-    }
-}
-
 int main(int argc, char **argv)
 {
     UNITY_BEGIN();
@@ -241,7 +188,5 @@ int main(int argc, char **argv)
     RUN_TEST(test_all_24_orientations_are_distinct);
     RUN_TEST(test_quaternionFor_matches_matrixFor_for_all_24_orientations);
     RUN_TEST(test_quaternionFor_forward_is_identity);
-    RUN_TEST(test_rotateDmpQuaternion_forward_is_noop);
-    RUN_TEST(test_rotateDmpQuaternion_consistent_with_matrix_for_all_24_orientations);
     return UNITY_END();
 }

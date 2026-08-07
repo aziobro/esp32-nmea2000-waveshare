@@ -13,9 +13,9 @@
   small enough (~80 lines) to fully own and test.
 
   Inputs are boat-frame (post ImuCoordinateTransform), calibrated (post
-  ImuCalibrationOps) accel/gyro/mag. Output quaternion follows the same
-  convention as the DMP's own Quat9 and ImuQuaternion::toEuler (rotation
-  from boat frame to the reference/level-north frame).
+  ImuCalibrationOps) accel/gyro/mag. Output quaternion follows
+  ImuQuaternion::toEuler's convention: rotation from boat frame to the
+  reference/level-north frame.
 */
 class MahonyFusion
 {

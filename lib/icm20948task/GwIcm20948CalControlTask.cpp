@@ -263,6 +263,7 @@ void Icm20948CalControl::handleGyroCalControl(AsyncWebServerRequest *request)
             return;
         }
         Vec3 bias = gyroCal.resultBiasDegPerSec();
+        Vec3 stddev = gyroCal.resultStdDevDegPerSec();
         ImuCalibration cal;
         DeviationTable devTable;
         bool devEnabled = false;
@@ -275,8 +276,18 @@ void Icm20948CalControl::handleGyroCalControl(AsyncWebServerRequest *request)
         cal.gyroCalibrationValid = true;
         cal.calibrationSequence++;
         persistCalibration(cal, static_cast<MountOrientation>(orientationIdx), devTable, devEnabled);
-        gyroCal.cancel();
-        request->send(200, "application/json", "{\"status\":\"OK\"}");
+        GwJsonDocument doc(240);
+        doc["status"] = "OK";
+        doc["state"] = "done";
+        doc["biasX"] = bias.x;
+        doc["biasY"] = bias.y;
+        doc["biasZ"] = bias.z;
+        doc["stdDevX"] = stddev.x;
+        doc["stdDevY"] = stddev.y;
+        doc["stdDevZ"] = stddev.z;
+        String out;
+        serializeJson(doc, out);
+        request->send(200, "application/json", out);
         return;
     }
     request->send(200, "application/json", "{\"status\":\"error\",\"message\":\"unknown action\"}");

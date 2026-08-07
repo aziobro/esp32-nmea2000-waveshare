@@ -3,7 +3,6 @@
 #include "ImuSimulator.h"
 #include "ImuCompass.h"
 #include "ImuCalibration.h"
-#include "ImuQuaternion.h"
 #include "ImuAngleMath.h"
 
 using namespace ImuSimulator;
@@ -19,8 +18,6 @@ void test_generate_sample_level_north(void)
     TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, out.accelG.x);
     TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.0, out.accelG.y);
     TEST_ASSERT_DOUBLE_WITHIN(1e-9, 1.0, out.accelG.z);
-    TEST_ASSERT_TRUE(ImuQuaternion::isValidUnit(out.dmpQuat));
-    TEST_ASSERT_TRUE(out.dmpValid);
     // Feeding the generated mag through the compass formula should
     // recover heading 0 (up to the formula's own fixed convention -
     // compared against the compass module's own behavior for
@@ -114,15 +111,6 @@ void test_slow_gyro_drift_grows_over_time(void)
     TEST_ASSERT_TRUE(later.gyroBiasDegPerSec[2] > early.gyroBiasDegPerSec[2]);
 }
 
-void test_dmp_heading_disagreement_offsets_dmp_yaw(void)
-{
-    SimulatorState s = Scenarios::dmpHeadingDisagreement(0.0, 15.0);
-    SimulatedSample sample = generateSample(s);
-    Quaternion truth = ImuQuaternion::fromEuler(0, 0, s.headingDeg * M_PI / 180.0);
-    double diff = ImuQuaternion::yawDifferenceDeg(truth, sample.dmpQuat);
-    TEST_ASSERT_DOUBLE_WITHIN(1e-3, 15.0, fabs(diff));
-}
-
 void test_heading_wrap_through_north_stays_near_boundary(void)
 {
     for (double t = 0; t < 20.0; t += 0.5)
@@ -132,26 +120,6 @@ void test_heading_wrap_through_north_stays_near_boundary(void)
         double distFromNorth = fabs(ImuAngleMath::shortestDiff(0.0, s.headingDeg));
         TEST_ASSERT_TRUE(distFromNorth <= 10.0 + 1e-6);
     }
-}
-
-void test_stale_dmp_output_flips_at_start_time(void)
-{
-    SimulatorState before = Scenarios::staleDmpOutput(4.0, 5.0);
-    SimulatorState after = Scenarios::staleDmpOutput(6.0, 5.0);
-    SimulatedSample sBefore = generateSample(before);
-    SimulatedSample sAfter = generateSample(after);
-    TEST_ASSERT_TRUE(sBefore.dmpValid);
-    TEST_ASSERT_FALSE(sAfter.dmpValid);
-}
-
-void test_quaternion_norm_error_flips_at_start_time(void)
-{
-    SimulatorState before = Scenarios::quaternionNormError(4.0, 5.0);
-    SimulatorState after = Scenarios::quaternionNormError(6.0, 5.0);
-    SimulatedSample sBefore = generateSample(before);
-    SimulatedSample sAfter = generateSample(after);
-    TEST_ASSERT_TRUE(ImuQuaternion::isValidUnit(sBefore.dmpQuat));
-    TEST_ASSERT_FALSE(ImuQuaternion::isValidUnit(sAfter.dmpQuat));
 }
 
 void test_magnetometer_dropout_zeros_output(void)
@@ -175,10 +143,7 @@ int main(int argc, char **argv)
     RUN_TEST(test_elliptical_soft_iron_scenario_correctable);
     RUN_TEST(test_sudden_magnetic_disturbance_jumps_at_start_time);
     RUN_TEST(test_slow_gyro_drift_grows_over_time);
-    RUN_TEST(test_dmp_heading_disagreement_offsets_dmp_yaw);
     RUN_TEST(test_heading_wrap_through_north_stays_near_boundary);
-    RUN_TEST(test_stale_dmp_output_flips_at_start_time);
-    RUN_TEST(test_quaternion_norm_error_flips_at_start_time);
     RUN_TEST(test_magnetometer_dropout_zeros_output);
     return UNITY_END();
 }

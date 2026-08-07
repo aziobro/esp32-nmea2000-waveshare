@@ -5,7 +5,7 @@
 /*
   Shared types for the IMU heading pipeline. This header (and every other
   Imu*.h/.cpp file in this directory except GwIcm20948Task.* and
-  GwIcm20948HardwareAdapter.*) has no Arduino/ESP32/ICM_20948 dependency on
+  GwIcm20948HardwareAdapter.*) has no Arduino/ESP32/hardware dependency on
   purpose - it compiles under both the real board envs and the
   icm20948_native_test host env (see platformio.ini), so the actual math can
   be unit-tested on a desktop.
@@ -32,19 +32,18 @@ struct Vec3
 };
 
 // Hamilton convention, w is the scalar part. Represents a rotation from the
-// boat frame to the reference (north/level) frame, same sense the DMP's
-// Quat9 and the Madgwick fusion filter both produce.
+// boat frame to the reference (north/level) frame, same sense the software
+// fusion filter produces.
 struct Quaternion
 {
     double w = 1, x = 0, y = 0, z = 0;
 };
 
 // What the user has configured (icmHeadingMode). "Auto" isn't a source in
-// itself - it's a policy that picks among the other three at runtime.
+// itself - it's a policy that picks among the software sources at runtime.
 enum class HeadingSourceMode : uint8_t
 {
     DiagnosticOnly = 0,
-    Dmp = 1,
     SoftwareCompass = 2,
     SoftwareFusion = 3,
     Auto = 4,
@@ -56,7 +55,6 @@ enum class HeadingSourceMode : uint8_t
 enum class HeadingSource : uint8_t
 {
     None = 0,
-    Dmp = 1,
     SoftwareCompass = 2,
     SoftwareFusion = 3,
 };
@@ -74,16 +72,11 @@ enum HeadingRejectReason : uint32_t
 {
     HR_NONE = 0,
     HR_INITIALIZING = 1u << 0,
-    HR_DMP_STALE = 1u << 1,
-    HR_BAD_QUATERNION = 1u << 2,
     HR_MAG_FIELD_LOW = 1u << 3,
     HR_MAG_FIELD_HIGH = 1u << 4,
     HR_MAG_FIELD_CHANGE = 1u << 5,
-    HR_DMP_COMPASS_DISAGREE = 1u << 6,
     HR_CALIBRATION_INVALID = 1u << 7,
     HR_SENSOR_READ_ERROR = 1u << 8,
-    HR_FIFO_ERROR = 1u << 9,
-    HR_SUDDEN_JUMP = 1u << 10,
     HR_FUSION_COMPASS_DISAGREE = 1u << 11,
     HR_MAG_INVALID = 1u << 12,
 };

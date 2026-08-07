@@ -3,14 +3,14 @@
 
 /*
   Bridges brief losses of every heading source (e.g. a magnetic
-  disturbance knocking out the compass while DMP/fusion are also
-  momentarily unavailable) by dead-reckoning via the gyro's rate of turn
+  disturbance knocking out both software heading candidates) by
+  dead-reckoning via the gyro's rate of turn
   for a bounded time, rather than reporting "no heading" the instant
   every candidate source drops out. Sits between HeadingSourceSelector
   and the rest of ImuCycleProcessor's heading-finalization stage.
 
   Deliberately source-agnostic about WHY a source became invalid -
-  magnetic disturbance, DMP staleness, a bad quaternion, anything else -
+  magnetic disturbance, fusion warmup, bad raw data, anything else -
   holdover only ever looks at the selector's own valid/invalid boolean,
   so a magnetic disturbance can't "poison" gyro-only continuation via
   some special-case rejection; it triggers holdover exactly like any
@@ -36,7 +36,7 @@ enum class HeadingHoldoverState
 struct HeadingHoldoverConfig
 {
     double maxHoldoverMs = 5000;            // provisional - see doc/IcmHeadingArchitecture.md
-    int minConsecutiveSamplesToRecover = 3; // matches DmpValidator's own convention
+    int minConsecutiveSamplesToRecover = 3;
     double recoveryBlendMs = 1000;          // circular blend duration when recovering FROM Holdover (not from Lost - see .cpp)
 };
 

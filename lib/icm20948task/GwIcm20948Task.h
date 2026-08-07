@@ -2,8 +2,8 @@
 #include "GwApi.h"
 
 /*
-  Task for a SparkFun 9DoF IMU Breakout (ICM-20948, Qwiic) plugged into the
-  Waveshare ESP32-S3-RS485-CAN board's onboard Qwiic-compatible connector.
+  Task for an ICM-20948 IMU on the Waveshare ESP32-S3-RS485-CAN board's
+  onboard Qwiic-compatible connector.
 
   Sends heel/pitch as NMEA2000 PGN 127257 (Attitude), computed from the
   accelerometer only (simple tilt calculation) - no magnetometer/heading yet,

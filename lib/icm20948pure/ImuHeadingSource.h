@@ -2,47 +2,9 @@
 #include "ImuTypes.h"
 
 /*
-  Validates the DMP's quaternion sample and selects/blends the active
-  heading source. This is the module that directly implements the
-  project's primary design goal: DMP yaw is treated as one candidate
-  source among several (software compass, software fusion), validated
-  before use, not trusted unconditionally - see doc/IcmHeadingArchitecture.md.
+  Selects and blends the active heading source between the software 9-axis
+  fusion candidate and the tilt-compensated compass.
 */
-
-// --- DMP sample validation ---
-
-struct DmpValidationConfig
-{
-    double maxSampleAgeMs = 500;           // provisional - tune once real FIFO timing is known
-    double quaternionNormTolerance = 0.05; // provisional
-    int minConsecutiveValidSamples = 3;    // provisional
-    double startupConvergenceMs = 3000;    // provisional - DMP needs time to converge after init
-    double maxDisagreementWithCompassDeg = 30; // provisional
-    double maxJumpDegPerSec = 120;             // provisional - implausibly fast heading change
-};
-
-class DmpValidator
-{
-public:
-    void reset();
-
-    // Call once per cycle with the latest DMP sample (or the previous
-    // one carried forward, with sampleFresh=false, if the FIFO produced
-    // nothing new this cycle). Returns a HeadingRejectReason bitmask (0 =
-    // HR_NONE = valid). compassHeadingDeg/compassValid let the disagreement
-    // check run even when compass isn't the active output source.
-    uint32_t validate(const Quaternion &q, bool sampleFresh, double ageMs,
-                       double compassHeadingDeg, bool compassValid,
-                       double elapsedSinceInitMs, double dtSec,
-                       const DmpValidationConfig &cfg = DmpValidationConfig());
-
-private:
-    int consecutiveValid = 0;
-    bool havePrevHeading = false;
-    double prevHeadingDeg = 0;
-};
-
-// --- Source selection / blending ---
 
 struct SourceCandidate
 {
@@ -85,7 +47,7 @@ public:
     // best current estimate either way (useful for the web UI even when
     // transmission is off).
     Result update(HeadingSourceMode mode,
-                   const SourceCandidate &fusion, const SourceCandidate &dmp, const SourceCandidate &compass,
+                   const SourceCandidate &fusion, const SourceCandidate &compass,
                    uint32_t nowMs, uint32_t transitionDurationMs = 1000);
 
     bool hasRecentTransition() const { return hasTransition; }
@@ -103,6 +65,6 @@ private:
     bool hasTransition = false;
     SourceTransition transition;
 
-    static HeadingSource pickAuto(const SourceCandidate &fusion, const SourceCandidate &dmp, const SourceCandidate &compass);
-    static const SourceCandidate &candidateFor(HeadingSource s, const SourceCandidate &fusion, const SourceCandidate &dmp, const SourceCandidate &compass);
+    static HeadingSource pickAuto(const SourceCandidate &fusion, const SourceCandidate &compass);
+    static const SourceCandidate &candidateFor(HeadingSource s, const SourceCandidate &fusion, const SourceCandidate &compass);
 };

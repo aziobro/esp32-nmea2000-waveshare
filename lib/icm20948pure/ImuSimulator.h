@@ -3,7 +3,7 @@
 
 /*
   Host-side synthetic sensor generator - lets the rest of the pipeline
-  (compass, fusion, DMP validation, source selection) be exercised against
+  (compass, fusion, source selection) be exercised against
   mathematically-consistent fake data, both in unit tests and in the
   on-device debug replay mode (compile-time gated, see
   GwIcm20948Task.cpp's ICM_DEBUG_REPLAY).
@@ -42,14 +42,6 @@ struct SimulatorState
     double magNoise = 0;
     bool magDropout = false; // simulates a disconnected/failed magnetometer: raw reads all-zero
 
-    bool dmpValid = true;    // false = no new DMP sample this tick (staleness)
-    bool dmpBadNorm = false; // injects a corrupted (non-unit) quaternion
-    // Offsets the DMP's own yaw from headingDeg (the compass/true heading)
-    // by this many degrees - models the DMP's internal fusion disagreeing
-    // with the independently-computed software compass, e.g. from a
-    // magnetic disturbance the DMP hasn't adapted to yet.
-    double dmpYawDisagreementDeg = 0;
-
     double horizontalFieldMagnitude = 22.0; // arbitrary units, consistent within a scenario is all that matters
     double verticalFieldMagnitude = 45.0;   // northern-hemisphere-like dip
 };
@@ -59,8 +51,6 @@ struct SimulatedSample
     Vec3 accelG;        // boat frame, g units, gravity only (no linear accel modeled)
     Vec3 gyroDegPerSec;  // boat frame
     Vec3 magRaw;         // boat frame, uncalibrated (see magHardIronBias/magSoftIronScale)
-    Quaternion dmpQuat;
-    bool dmpValid = true;
 };
 
 namespace ImuSimulator
@@ -84,10 +74,7 @@ namespace ImuSimulator
         SimulatorState ellipticalSoftIronDistortion(double timeSec, double headingDeg = 45.0);
         SimulatorState suddenMagneticDisturbance(double timeSec, double disturbanceStartSec = 5.0);
         SimulatorState slowGyroDrift(double timeSec, double driftDegPerSecPerSec = 0.001);
-        SimulatorState dmpHeadingDisagreement(double timeSec, double disagreementDeg = 15.0);
         SimulatorState headingWrapThroughNorth(double timeSec, double periodSec = 20.0);
-        SimulatorState staleDmpOutput(double timeSec, double staleStartSec = 5.0);
-        SimulatorState quaternionNormError(double timeSec, double errorStartSec = 5.0);
         SimulatorState magnetometerDropout(double timeSec, double dropoutStartSec = 5.0);
     }
 }
